@@ -20,12 +20,12 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 APP_NAME = "The iPhone Guy - Android Cleaner v0.18.1"
-APP_VERSION = "0.18.1"
+APP_VERSION = "0.18.3"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
 ADMIN_PIN_ITERATIONS = 200000
 ADMIN_SESSION_SECONDS = 15 * 60
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 PRODUCTION_CONFIG_PATH = BASE_DIR / "production_config.json"
 DATA_DIR = Path(os.getenv("LOCALAPPDATA", BASE_DIR)) / "TheiPhoneGuyAndroidCleaner"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -405,7 +405,7 @@ def find_adb():
 def run_adb(args, timeout=20):
     adb = find_adb()
     if not adb:
-        raise RuntimeError("ADB was not found. Run SETUP.bat first.")
+        raise RuntimeError("ADB tools are missing from this Android Cleaner installation. Reinstall or update Android Cleaner.")
     try:
         stamp = datetime.now().isoformat(timespec="seconds")
         with open(ADB_AUDIT_LOG, "a", encoding="utf-8") as f:
@@ -535,7 +535,7 @@ def pull_apk_identity(serial, app):
     aapt2 = find_aapt2()
     if not aapt2:
         raise RuntimeError(
-            "AAPT2 was not found. Run SETUP.bat from this version."
+            "AAPT2 tools are missing from this Android Cleaner installation. Reinstall or update Android Cleaner."
         )
 
     resolver_log(f"IDENTITY {package}: AAPT2 found {aapt2}")
@@ -3816,7 +3816,7 @@ class Cleaner(tk.Tk):
             resolver_log(f"AAPT2 locator returned: {aapt2!r}")
             if not aapt2:
                 msg = (
-                    "AAPT2 was not found. Run SETUP.bat from this version, "
+                    "AAPT2 tools are missing from this Android Cleaner installation. Reinstall or update Android Cleaner. "
                     "then reopen Android Cleaner."
                 )
                 resolver_log("ERROR " + msg)
