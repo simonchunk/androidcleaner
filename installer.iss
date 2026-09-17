@@ -1,5 +1,5 @@
 #define MyAppName "The iPhone Guy - Android Cleaner"
-#define MyAppVersion "0.18.6"
+#define MyAppVersion "0.18.7"
 #define MyAppPublisher "The iPhone Guy"
 #define MyAppExeName "AndroidCleaner.exe"
 
@@ -35,6 +35,3 @@ Name: "{autodesktop}\Android Cleaner"; Filename: "{app}\{#MyAppExeName}"; Workin
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
-
-[Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch Android Cleaner"; Flags: nowait postinstall skipifsilent

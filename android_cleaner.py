@@ -22,8 +22,8 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_NAME = "The iPhone Guy - Android Cleaner v0.18.6"
-APP_VERSION = "0.18.6"
+APP_NAME = "The iPhone Guy - Android Cleaner v0.18.7"
+APP_VERSION = "0.18.7"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
 ADMIN_PIN_ITERATIONS = 200000
@@ -2453,8 +2453,13 @@ class Cleaner(tk.Tk):
         if suffix == ".exe" and verified:
             if messagebox.askyesno("Update Downloaded", f"Update downloaded successfully.\n\n{verify_text}\n\nInstall now? Android Cleaner will close."):
                 try:
-                    subprocess.Popen([str(dest)], cwd=str(dest.parent))
+                    # Hand the verified installer to Windows as a separate process, then
+                    # terminate this PyInstaller process completely.  The installer does
+                    # not auto-launch the new EXE; this avoids a transient _MEI/Python DLL
+                    # collision seen when upgrading a running one-file build.
+                    subprocess.Popen([str(dest)], cwd=str(dest.parent), close_fds=True)
                     self.destroy()
+                    self.after_idle(lambda: None)
                 except Exception as e:
                     messagebox.showerror("Update", f"Could not start installer: {e}")
         else:
@@ -2546,7 +2551,6 @@ class Cleaner(tk.Tk):
         menu.add_separator()
         menu.add_command(label="Knowledge Database", command=self.open_knowledge_db)
         menu.add_command(label="Shared Knowledge", command=self.open_shared_knowledge)
-        menu.add_command(label="Cross-PC Test Mode", command=self.toggle_cross_pc_test_mode)
         menu.add_command(label="Update Channel (Production/Test)", command=self.set_update_channel)
         menu.add_command(label="Export Knowledge DB", command=self.export_knowledge_db_ui)
         menu.add_command(label="Import Knowledge DB", command=self.import_knowledge_db_ui)
