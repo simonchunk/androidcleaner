@@ -1,0 +1,46 @@
+name: Build Windows Android Cleaner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Android Cleaner
+        shell: powershell
+        run: |
+          pyinstaller --clean --noconfirm AndroidCleaner.spec
+
+      - name: Show build output
+        shell: powershell
+        run: |
+          Get-ChildItem -Recurse dist
+
+      - name: Package Windows build
+        shell: powershell
+        run: |
+          Compress-Archive -Path "dist\AndroidCleaner\*" -DestinationPath "AndroidCleaner-v0.18.1-Windows.zip" -Force
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidCleaner-v0.18.1-Windows
+          path: AndroidCleaner-v0.18.1-Windows.zip
+          if-no-files-found: error
