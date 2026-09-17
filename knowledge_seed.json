@@ -1,0 +1,145 @@
+{
+  "seed_version": 1,
+  "sources": [
+    {
+      "id": "google_gms",
+      "name": "Google Play services documentation",
+      "url": "https://developers.google.com/android/reference/com/google/android/gms/common/GooglePlayServicesUtil",
+      "authority": "Google"
+    },
+    {
+      "id": "samsung_knox",
+      "name": "Samsung Knox official application lists",
+      "url": "https://docs.samsungknox.com/",
+      "authority": "Samsung"
+    }
+  ],
+  "entries": [
+    {
+      "package": "com.google.android.gms",
+      "name": "Google Play services",
+      "vendor": "Google",
+      "app_type": "SYSTEM",
+      "source_id": "google_gms",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.android.vending",
+      "name": "Google Play Store",
+      "vendor": "Google",
+      "app_type": "SYSTEM",
+      "source_id": "google_gms",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.sec.android.app.camera",
+      "name": "Camera",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.android.scloud",
+      "name": "Samsung Cloud",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.android.app.contacts",
+      "name": "Contacts",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.android.scs",
+      "name": "Samsung Core Services",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.sec.android.sdhms",
+      "name": "Samsung Device Health Manager Service",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.android.dialer",
+      "name": "Phone",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.android.mobileservice",
+      "name": "Samsung Experience Service",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.sec.android.gallery3d",
+      "name": "Gallery",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.android.incallui",
+      "name": "Call",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.android.messaging",
+      "name": "Messages",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.sec.android.app.myfiles",
+      "name": "My Files",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    },
+    {
+      "package": "com.samsung.knox.securefolder",
+      "name": "Secure Folder",
+      "vendor": "Samsung",
+      "app_type": "OEM / SYSTEM",
+      "source_id": "samsung_knox",
+      "confidence": 100,
+      "protection_level": "SYSTEM"
+    }
+  ]
+}

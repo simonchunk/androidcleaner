@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "categories": [
+    {"id":"qr","label":"QR / Barcode Scanner","score":30,
+     "name_terms":["qr scanner","qr code scanner","qr reader","barcode scanner","barcode reader","scan qr"],
+     "package_terms":["qrscanner","qrcode","barcodescanner"]},
+    {"id":"cleaner","label":"Cleaner / Optimizer / Booster","score":36,
+     "name_terms":["cleaner","phone clean","clean phone","optimizer","optimiser","booster","speed boost","junk clean","cache clean","phone master"],
+     "package_terms":["cleaner","optimizer","optimiser","booster"]},
+    {"id":"antivirus","label":"Antivirus / Security Cleaner","score":30,
+     "name_terms":["antivirus","anti-virus","anti virus","virus cleaner","virus removal","virus scan","mobile security"],
+     "package_terms":["antivirus","viruscleaner"]},
+    {"id":"pdf","label":"PDF / Document Reader","score":26,
+     "name_terms":["pdf reader","pdf viewer","document reader","all document reader","pdf scanner"],
+     "package_terms":["pdfreader","pdfviewer","documentreader"]},
+    {"id":"flashlight","label":"Flashlight / Torch","score":30,
+     "name_terms":["flashlight","torch light","torchlight","flash light","super torch"],
+     "package_terms":["flashlight","torchlight"]},
+    {"id":"recovery","label":"Photo / File Recovery","score":34,
+     "name_terms":["photo recovery","file recovery","recover photos","deleted photos","data recovery","restore photos","recover deleted"],
+     "package_terms":["photorecovery","filerecovery","datarecovery"]},
+    {"id":"launcher","label":"Launcher / Home Screen","score":36,
+     "name_terms":["launcher","home launcher","home screen launcher"],
+     "package_terms":["launcher"]}
+  ]
+}
