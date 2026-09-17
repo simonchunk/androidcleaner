@@ -22,8 +22,8 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_NAME = "The iPhone Guy - Android Cleaner v0.18.7"
-APP_VERSION = "0.18.7"
+APP_NAME = "The iPhone Guy - Android Cleaner v1.0.0"
+APP_VERSION = "1.0.0"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
 ADMIN_PIN_ITERATIONS = 200000

@@ -1,11 +1,11 @@
-# Android Cleaner v0.18.7 - Windows installer build
+# Android Cleaner v1.0.0 - Production Windows installer build
 
-This build produces a real Windows Setup EXE using GitHub Actions + Inno Setup.
+Run the GitHub Actions workflow **Build Windows Android Cleaner Installer**.
 
-The installer places Android Cleaner under Program Files, registers it in Windows Installed apps, creates Start Menu and optional Desktop shortcuts, and bundles ADB/AAPT2. No Python, SETUP.bat, Android SDK, or loose portable folder is required on the staff PC.
+The workflow builds the self-contained Windows application, stages ADB and AAPT2, compiles the Inno Setup installer, creates a SHA-256 sidecar, and uploads both as the workflow artifact.
 
-Persistent workshop data remains under `%LOCALAPPDATA%\TheiPhoneGuyAndroidCleaner`, so installing/updating/uninstalling the program does not overwrite the learned database or workstation configuration.
+Expected release assets:
+- `The-iPhone-Guy-Android-Cleaner-Setup-v1.0.0.exe`
+- `The-iPhone-Guy-Android-Cleaner-Setup-v1.0.0.exe.sha256`
 
-GitHub workflow artifact:
-- `The-iPhone-Guy-Android-Cleaner-Setup-v0.18.7.exe`
-- matching `.sha256`
+Publish them under GitHub release tag `v1.0.0` on the Production channel. Existing `%LOCALAPPDATA%\\TheiPhoneGuyAndroidCleaner` data is not replaced by the installer.

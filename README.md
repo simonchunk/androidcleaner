@@ -95,9 +95,6 @@ Popup-ad risk now separates active access from merely declared manifest capabili
 - Main secondary-cleanup summary now reports unused apps and games instead of popup-risk counts.
 
 
-## v0.15.2 Cross-PC Test Mode
-Advanced > Cross-PC Test Mode creates a separate fresh local database, downloads shared intelligence only as TEST-PC-2, blocks all shared uploads, rescans the connected phone against shared knowledge, and restores the normal local database when Test Mode is ended.
-
 ## v0.17.1 workshop changes
 - Cleanup now contains CRITICAL/HIGH only. CHECK findings live in a separate Review tab.
 - Repair Outcome is no longer a normal footer action: successful uninstall -> rescan -> Repair Outcome remains automatic. Manual outcome entry is available under Advanced for edge cases.
@@ -107,14 +104,14 @@ Advanced > Cross-PC Test Mode creates a separate fresh local database, downloads
 - Decision is removed from the workshop table; Reputation now occupies the prominent second evidence column after Review.
 - Shared Knowledge sync is production-oriented: local evidence uploads, then shared intelligence downloads; it is rate-limited and also runs when a new device is connected.
 - First-run configuration names the store and PC and creates a unique Store ID. The deployed Apps Script URL can be preloaded in `production_config.json`; the API key can also be injected there for the final installer build.
-- Android Platform Tools and Build Tools remain automatically downloaded by SETUP for development ZIP builds. The final Windows installer will own this dependency bootstrap.
+- The production Windows installer bundles Android Platform Tools (ADB) and AAPT2; staff PCs do not need Python or the Android SDK.
 - Update infrastructure is scaffolded through `update_manifest_url`; no production manifest is published yet, so Check for Updates reports that cleanly.
 - Local knowledge/configuration remain under LocalAppData and are not shipped inside this ZIP.
 
 ## v0.17.1 staff lockdown
 - Everyday staff screen remains focused on Cleanup, Review, Games, Unused Apps and All Apps.
 - Advanced tools are locked behind a company Admin PIN.
-- Admin Mode unlocks diagnostics, Shared Knowledge configuration, database import/export, Cross-PC Test Mode and manual repair-intelligence tools for 15 minutes.
+- Admin Mode unlocks diagnostics, Shared Knowledge configuration, database import/export and manual repair-intelligence tools for 15 minutes.
 - The Admin PIN is compiled as a PBKDF2-SHA256 hash; the plaintext PIN is not stored by the application.
 - First-run setup asks only for Store and Computer name; it does not ask staff to create an admin PIN.
 

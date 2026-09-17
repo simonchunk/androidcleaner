@@ -1,5 +1,5 @@
 #define MyAppName "The iPhone Guy - Android Cleaner"
-#define MyAppVersion "0.18.7"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "The iPhone Guy"
 #define MyAppExeName "AndroidCleaner.exe"
 
