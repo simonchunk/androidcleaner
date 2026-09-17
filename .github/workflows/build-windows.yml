@@ -69,7 +69,7 @@ jobs:
         run: |
           & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
-          $setup = Get-ChildItem -Path 'installer-output' -Filter 'The-iPhone-Guy-Android-Cleaner-Setup-v0.18.7.exe' -File | Select-Object -First 1
+          $setup = Get-ChildItem -Path 'installer-output' -Filter 'The-iPhone-Guy-Android-Cleaner-Setup-v1.0.0.exe' -File | Select-Object -First 1
           if (!$setup) { throw 'Installer EXE was not created' }
           $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
           "$hash  $($setup.Name)" | Set-Content "$($setup.FullName).sha256"
@@ -82,8 +82,8 @@ jobs:
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: AndroidCleaner-v0.18.7-Installer
+          name: AndroidCleaner-v1.0.0-Installer
           path: |
-            installer-output/The-iPhone-Guy-Android-Cleaner-Setup-v0.18.7.exe
-            installer-output/The-iPhone-Guy-Android-Cleaner-Setup-v0.18.7.exe.sha256
+            installer-output/The-iPhone-Guy-Android-Cleaner-Setup-v1.0.0.exe
+            installer-output/The-iPhone-Guy-Android-Cleaner-Setup-v1.0.0.exe.sha256
           if-no-files-found: error
