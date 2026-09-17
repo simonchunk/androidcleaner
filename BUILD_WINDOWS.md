@@ -1,4 +1,4 @@
-# Android Cleaner v0.18.4 - Windows installer build
+# Android Cleaner v0.18.5 - Windows installer build
 
 This build produces a real Windows Setup EXE using GitHub Actions + Inno Setup.
 
@@ -7,5 +7,5 @@ The installer places Android Cleaner under Program Files, registers it in Window
 Persistent workshop data remains under `%LOCALAPPDATA%\TheiPhoneGuyAndroidCleaner`, so installing/updating/uninstalling the program does not overwrite the learned database or workstation configuration.
 
 GitHub workflow artifact:
-- `The-iPhone-Guy-Android-Cleaner-Setup-v0.18.4.exe`
+- `The-iPhone-Guy-Android-Cleaner-Setup-v0.18.5.exe`
 - matching `.sha256`
