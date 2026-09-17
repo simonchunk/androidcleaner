@@ -14,6 +14,8 @@ import tempfile
 import urllib.parse
 import urllib.request
 import urllib.error
+import ssl
+import certifi
 from collections import Counter
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
@@ -2337,18 +2339,36 @@ class Cleaner(tk.Tk):
         win.protocol("WM_DELETE_WINDOW", finish)
 
 
+    @staticmethod
+    def _update_ssl_context():
+        """Verified TLS context for GitHub update traffic in frozen Windows builds."""
+        return ssl.create_default_context(cafile=certifi.where())
+
+    @staticmethod
+    def _update_error_text(exc):
+        if isinstance(exc, urllib.error.HTTPError):
+            return f"GitHub returned HTTP {exc.code} ({exc.reason})."
+        if isinstance(exc, urllib.error.URLError):
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                return "SSL certificate verification failed while connecting to GitHub."
+            return f"Could not connect to GitHub: {reason}"
+        if isinstance(exc, ssl.SSLCertVerificationError):
+            return "SSL certificate verification failed while connecting to GitHub."
+        return str(exc) or exc.__class__.__name__
+
     def _github_release_api(self, channel="Production"):
         repo = "simonchunk/androidcleaner"
         headers = {"Accept":"application/vnd.github+json", "User-Agent":f"The-iPhone-Guy-Android-Cleaner/{APP_VERSION}"}
         if str(channel).lower() == "test":
             req=urllib.request.Request(f"https://api.github.com/repos/{repo}/releases?per_page=20", headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with urllib.request.urlopen(req, timeout=10, context=self._update_ssl_context()) as r:
                 releases=json.loads(r.read().decode("utf-8"))
             releases=[x for x in releases if not x.get("draft")]
             return releases[0] if releases else None
         req=urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/latest", headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with urllib.request.urlopen(req, timeout=10, context=self._update_ssl_context()) as r:
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code == 404:
@@ -2401,14 +2421,14 @@ class Cleaner(tk.Tk):
                 update_dir.mkdir(parents=True, exist_ok=True)
                 dest=update_dir / name
                 req=urllib.request.Request(url, headers={"User-Agent":f"The-iPhone-Guy-Android-Cleaner/{APP_VERSION}"})
-                with urllib.request.urlopen(req, timeout=30) as r, open(dest,"wb") as f:
+                with urllib.request.urlopen(req, timeout=30, context=self._update_ssl_context()) as r, open(dest,"wb") as f:
                     shutil.copyfileobj(r,f)
                 assets=release.get("assets") or []
                 sha_asset=next((a for a in assets if str(a.get("name","")).lower() in (name.lower()+".sha256", "sha256sums.txt")), None)
                 verified=False
                 if sha_asset and sha_asset.get("browser_download_url"):
                     sr=urllib.request.Request(sha_asset["browser_download_url"], headers={"User-Agent":f"The-iPhone-Guy-Android-Cleaner/{APP_VERSION}"})
-                    with urllib.request.urlopen(sr, timeout=15) as r:
+                    with urllib.request.urlopen(sr, timeout=15, context=self._update_ssl_context()) as r:
                         txt=r.read().decode("utf-8",errors="replace")
                     actual=hashlib.sha256(dest.read_bytes()).hexdigest().lower()
                     expected=None
@@ -2450,9 +2470,10 @@ class Cleaner(tk.Tk):
                 release=self._github_release_api(channel)
                 self.after(0, lambda:self._show_update_release(release, manual))
             except Exception as e:
-                resolver_log("Update check failed: "+str(e))
+                detail=self._update_error_text(e)
+                resolver_log("Update check failed: "+repr(e))
                 if manual:
-                    self.after(0, lambda: messagebox.showwarning("Updates", "Could not check GitHub for updates. Android Cleaner will continue to work offline."))
+                    self.after(0, lambda detail=detail: messagebox.showwarning("Updates", f"Could not check GitHub for updates.\n\n{detail}\n\nAndroid Cleaner will continue to work offline."))
         threading.Thread(target=worker,daemon=True).start()
 
     def set_update_channel(self):
