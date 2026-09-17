@@ -33,10 +33,11 @@ jobs:
         run: |
           Get-ChildItem -Recurse dist
 
-           - name: Package Windows build
+      - name: Package Windows build
         shell: powershell
         run: |
           Compress-Archive -Path "dist\AndroidCleaner.exe" -DestinationPath "AndroidCleaner-v0.18.1-Windows.zip" -Force
+
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
