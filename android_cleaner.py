@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.13"
+APP_VERSION = "1.2.14"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -39,6 +39,65 @@ APP_DIR = BASE_DIR
 
 def bundled_asset(*parts):
     return APP_DIR.joinpath("assets", *parts)
+
+def make_ui_icon(kind, color="#ffffff", size=22):
+    """Create a crisp supersampled line icon without relying on Windows emoji fonts."""
+    scale = 4
+    S = size * scale
+    img = Image.new("RGBA", (S, S), (0,0,0,0))
+    d = ImageDraw.Draw(img)
+    c = color
+    W = max(5, int(2.1*scale))
+    def line(points, width=W):
+        d.line([(int(x*scale),int(y*scale)) for x,y in points], fill=c, width=width, joint="curve")
+    def ellipse(box, width=W, fill=None):
+        d.ellipse(tuple(int(v*scale) for v in box), outline=c if fill is None else None,
+                  fill=c if fill else None, width=width)
+    def rect(box, radius=2, width=W, fill=None):
+        b=tuple(int(v*scale) for v in box)
+        d.rounded_rectangle(b, radius=int(radius*scale), outline=c if fill is None else None,
+                            fill=c if fill else None, width=width)
+    if kind == "rescan":
+        d.arc((3*scale,3*scale,19*scale,19*scale), 35, 305, fill=c, width=W)
+        d.polygon([(18*scale,3*scale),(21*scale,8*scale),(15*scale,8*scale)], fill=c)
+    elif kind == "cleanup":
+        line([(5,18),(17,6)]); line([(9,20),(20,9)])
+        d.polygon([(3*scale,17*scale),(8*scale,22*scale),(12*scale,18*scale),(7*scale,13*scale)], fill=c)
+    elif kind == "review":
+        rect((5,3,17,20),2); line([(8,8),(14,8)]); line([(8,12),(14,12)]); line([(8,16),(12,16)])
+    elif kind == "games":
+        d.rounded_rectangle((2*scale,7*scale,20*scale,18*scale), radius=5*scale, outline=c, width=W)
+        line([(7,10),(7,15)]); line([(4.5,12.5),(9.5,12.5)])
+        ellipse((14,10,16,12),fill=True); ellipse((17,13,19,15),fill=True)
+    elif kind == "unused":
+        rect((5,6,17,20),2); line([(3,6),(19,6)]); line([(8,3),(14,3)]); line([(9,10),(9,17)]); line([(13,10),(13,17)])
+    elif kind == "all":
+        for yy in (4,10,16):
+            for xx in (4,10,16):
+                d.rounded_rectangle((xx*scale,yy*scale,(xx+3)*scale,(yy+3)*scale), radius=scale, fill=c)
+    elif kind == "help":
+        ellipse((3,3,19,19)); 
+        d.text((9*scale,4*scale), "?", fill=c, anchor="ma")
+    elif kind == "settings":
+        ellipse((7,7,15,15), width=W); ellipse((10,10,12,12), fill=True)
+        for a,b in [((11,2),(11,6)),((11,16),(11,20)),((2,11),(6,11)),((16,11),(20,11))]: line([a,b])
+    elif kind == "remove":
+        rect((6,7,16,20),2); line([(4,6),(18,6)]); line([(8,3),(14,3)]); line([(9,10),(9,17)]); line([(13,10),(13,17)])
+    elif kind == "safe":
+        d.polygon([(11*scale,2*scale),(19*scale,5*scale),(18*scale,13*scale),(11*scale,21*scale),(4*scale,13*scale),(3*scale,5*scale)], outline=c, fill=None)
+        line([(7,11),(10,14),(15,8)])
+    elif kind == "warning":
+        d.polygon([(11*scale,2*scale),(21*scale,20*scale),(1*scale,20*scale)], outline=c, fill=None)
+        line([(11,7),(11,13)]); ellipse((10,16,12,18),fill=True)
+    elif kind == "repair":
+        line([(4,18),(17,5)]); ellipse((2,16,7,21)); ellipse((15,2,20,7))
+    elif kind == "check":
+        line([(4,12),(9,17),(19,6)], width=max(W,7))
+    else:
+        ellipse((4,4,18,18))
+    img = img.resize((size,size), Image.Resampling.LANCZOS)
+    return img
+
 
 PRODUCTION_CONFIG_PATH = BASE_DIR / "production_config.json"
 DATA_DIR = Path(os.getenv("LOCALAPPDATA", BASE_DIR)) / "TheiPhoneGuyAndroidCleaner"
@@ -2745,7 +2804,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.13 UI Polish + Icon Runner Fix loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.14 Scanner Icons UI Polish loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -3177,6 +3236,15 @@ class Cleaner(ctk.CTk):
     def _quick_theme_toggle(self):
         return
 
+    def _ui_icon(self, kind, color="#ffffff", size=20):
+        if not hasattr(self, "_ui_icon_cache"):
+            self._ui_icon_cache = {}
+        key=(kind,color,size)
+        if key not in self._ui_icon_cache:
+            pil=make_ui_icon(kind,color,size)
+            self._ui_icon_cache[key]=ctk.CTkImage(light_image=pil,dark_image=pil,size=(size,size))
+        return self._ui_icon_cache[key]
+
     def build(self):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -3213,7 +3281,7 @@ class Cleaner(ctk.CTk):
             with Image.open(brand_path) as _brand:
                 _brand = _brand.convert("RGB")
                 self.brand_image = ctk.CTkImage(light_image=_brand.copy(), dark_image=_brand.copy(),
-                                                size=(280,96))
+                                                size=(270,92))
             ctk.CTkLabel(brand, text="", image=self.brand_image).pack()
         except Exception as exc:
             resolver_log(f"BRAND image load failed: {exc!r}")
@@ -3266,7 +3334,9 @@ class Cleaner(ctk.CTk):
         nav.pack(fill="x", padx=22, pady=(14, 10))
         self.nav_buttons = {}
         for label in ("Cleanup","Review","Games","Unused Apps","All Apps"):
-            b = ctk.CTkButton(nav, text=label, height=46, corner_radius=9,
+            _nav_kind={"Cleanup":"cleanup","Review":"review","Games":"games","Unused Apps":"unused","All Apps":"all"}.get(label,"all")
+            b = ctk.CTkButton(nav, text=label, image=self._ui_icon(_nav_kind,"#ffffff",19),
+                              compound="left", height=46, corner_radius=9,
                               fg_color=C["card2"], hover_color="#17496e",
                               border_width=1, border_color=C["line"],
                               font=("Segoe UI", 11, "bold"),
@@ -3275,7 +3345,8 @@ class Cleaner(ctk.CTk):
             self.nav_buttons[label] = b
 
         self.rescan_button = ctk.CTkButton(
-            nav, text="↻  Rescan", width=118, height=42, corner_radius=9,
+            nav, text="Rescan", image=self._ui_icon("rescan","#ffffff",19), compound="left",
+            width=118, height=42, corner_radius=9,
             fg_color=C["blue"], border_width=2, border_color="#45b2ff",
             hover_color=C["blue_hover"], font=("Segoe UI", 11, "bold"),
             command=self.scan
@@ -3436,11 +3507,11 @@ class Cleaner(ctk.CTk):
         actions=ctk.CTkFrame(right,fg_color="transparent")
         actions.pack(fill="x",side="bottom",padx=16,pady=(6,10))
         actions.grid_columnconfigure((0,1),weight=1)
-        self.remove_button=ctk.CTkButton(actions,text="🗑  Remove App",height=42,corner_radius=9,
+        self.remove_button=ctk.CTkButton(actions,text="Remove App",image=self._ui_icon("remove","#ffffff",19),compound="left",height=42,corner_radius=9,
                                          fg_color=C["red"],hover_color="#b92335",font=("Segoe UI",11,"bold"),
                                          command=self.uninstall)
         self.remove_button.grid(row=0,column=0,sticky="ew",padx=(0,6))
-        ctk.CTkButton(actions,text="🛡  Mark Safe",height=42,corner_radius=9,fg_color=("#dff7ee","#103b32"),
+        ctk.CTkButton(actions,text="Mark Safe",image=self._ui_icon("safe","#ffffff",19),compound="left",height=42,corner_radius=9,fg_color=("#dff7ee","#103b32"),
                       text_color=("#116b50","#61e7b1"),hover_color=("#c8efe2","#155443"),
                       border_width=1,border_color=("#51b99a","#267c64"),font=("Segoe UI",11,"bold"),
                       command=lambda:self.classify("Safe")).grid(row=0,column=1,sticky="ew",padx=(6,0))
@@ -3492,7 +3563,7 @@ class Cleaner(ctk.CTk):
     def update_selection_summary(self):
         n_checked = len(self.checked_packages)
         if hasattr(self, "remove_button"):
-            self.remove_button.configure(text=("🗑  Remove Apps" if n_checked > 1 else "🗑  Remove App"))
+            self.remove_button.configure(text=("Remove Apps" if n_checked > 1 else "Remove App"))
         apps = self.action_apps()
         if not apps:
             self.selection_var.set("Select an app to review it.")
@@ -3537,7 +3608,7 @@ class Cleaner(ctk.CTk):
             history.append(f"SHARED: {net.get('observations',0)} obs / {net.get('removals',0)} removals / {net.get('repair_yes',0)} fixed")
             if int(net.get('safe_votes') or 0): history.append(f"Shared safe marks {net.get('safe_votes')}")
             if int(net.get('malware_votes') or 0): history.append(f"Shared malware marks {net.get('malware_votes')}")
-        self.intel_title_var.set("\n".join("✓  "+x for x in history) if history else "✓  No previous repair evidence found")
+        self.intel_title_var.set("\n".join("•  "+x for x in history) if history else "No previous repair evidence found")
 
         metadata=[]
         if a.get("version_name"):
@@ -3559,7 +3630,7 @@ class Cleaner(ctk.CTk):
         if reasons:
             details.append("Why flagged: "+" • ".join(reasons[:4])+(" • …" if len(reasons)>4 else ""))
         if self._is_protected_app(a):
-            details.insert(0, "🔒 PROTECTED SYSTEM APP — removal disabled")
+            details.insert(0, "PROTECTED SYSTEM APP — removal disabled")
         self.intel_reason_var.set("\n".join("•  "+x for x in details) if details else "No additional risk details.")
 
     def show_how_to_connect(self):
@@ -4103,7 +4174,8 @@ class Cleaner(ctk.CTk):
                 # on name resolution/retriage to start it: a fully cached scan may
                 # have no resolver work at all.
                 self.after(50, self.start_background_icon_discovery)
-                self.after(0, lambda:self._scan_ui(False))
+                # v1.2.14: icon extraction is part of the visible scan. The icon
+                # pipeline closes the overlay after its final repaint.
                 if self._open_repair_outcome_after_scan and self.pending_repair_apps:
                     self._open_repair_outcome_after_scan = False
                     self.after(250, self.record_repair_outcome)
@@ -4377,11 +4449,15 @@ class Cleaner(ctk.CTk):
         )
         if hasattr(self, "icon_status_var"):
             self.icon_status_var.set(f"Icons: 0/{total} loaded")
+        self.after(0, lambda: self._scan_ui(
+            True, "Loading app icons…", 0, max(total,1)
+        ))
 
         if not work:
             self._icon_pipeline_running = False
             self._icon_pipeline_completed_signature = signature
             resolver_log(f"ICON PIPELINE FINISH serial={serial}: no suspicious/review candidates")
+            self.after(0, lambda:self._scan_ui(False))
             return
 
         def worker():
@@ -4421,10 +4497,15 @@ class Cleaner(ctk.CTk):
                             lambda d=done,t=total:
                                 self.icon_status_var.set(f"Icons: {d}/{t} loaded")
                         )
-                    # Repaint only. The running guard prevents this repaint from
-                    # spawning another icon worker.
-                    self.after(0, self.apply_view)
+                    self.after(
+                        0,
+                        lambda n=attempted,t=total:
+                            self._scan_ui(True, "Loading app icons…", n, t)
+                    )
                 completed_normally = True
+                # One final repaint prevents the selected assessment from being
+                # cleared/flickered once per icon.
+                self.after(0, self.apply_view)
                 resolver_log(
                     f"ICON PIPELINE FINISH serial={serial} generation={token}: "
                     f"loaded={done}/{total} attempted={attempted}"
@@ -4433,10 +4514,12 @@ class Cleaner(ctk.CTk):
                 resolver_log(
                     f"ICON PIPELINE ERROR serial={serial} generation={token}: {exc!r}"
                 )
+                self.after(0, lambda:self._scan_ui(False))
             finally:
                 self._icon_pipeline_running = False
                 if completed_normally:
                     self._icon_pipeline_completed_signature = signature
+                    self.after(80, lambda:self._scan_ui(False))
 
         threading.Thread(
             target=worker, daemon=True, name=f"icon-pipeline-{token}"
@@ -4452,9 +4535,11 @@ class Cleaner(ctk.CTk):
         if hasattr(self, "nav_buttons"):
             for label, button in self.nav_buttons.items():
                 active = label == mode
+                active_color = ("#e92f49" if label == "Cleanup" else self.C["blue"])
+                active_border = ("#ff536b" if label == "Cleanup" else "#58baff")
                 button.configure(
-                    fg_color=(self.C["blue"] if active else self.C["card2"]),
-                    border_color=("#58baff" if active else self.C["line"]),
+                    fg_color=(active_color if active else self.C["card2"]),
+                    border_color=(active_border if active else self.C["line"]),
                     border_width=(2 if active else 1)
                 )
         if hasattr(self, "view_label_var"):
@@ -4555,10 +4640,20 @@ class Cleaner(ctk.CTk):
                 if x.get("cleanup_candidate", False)
             ]
 
+        # Preserve the technician's selected app across icon/name/retriage repaints.
+        selected_package = None
+        try:
+            selected_ids = self.tree.selection()
+            if selected_ids:
+                selected_package = self.tree.set(selected_ids[0], "package")
+        except Exception:
+            selected_package = None
+
         for iid in self.tree.get_children():
             self.tree.delete(iid)
 
         self.rows = {}
+        selected_iid = None
 
         for app in apps:
             tag = app["priority"].lower()
@@ -4571,7 +4666,7 @@ class Cleaner(ctk.CTk):
                 values=(
                     ("🔒" if self._is_protected_app(app) else ("☑" if app["package"] in self.checked_packages else "☐")),
                     app["app_name"],
-                    ({"CRITICAL":"🔴  CRITICAL","HIGH":"🟠  HIGH","CHECK":"🟡  CHECK"}
+                    ({"CRITICAL":"CRITICAL","HIGH":"HIGH","CHECK":"CHECK"}
                      .get(app.get("priority"),app.get("priority",""))),
                     app.get("app_type", "UNKNOWN"),
                     app["installer_label"],
@@ -4593,7 +4688,16 @@ class Cleaner(ctk.CTk):
                 tags=(tag,)
             )
             self.rows[iid] = app
+            if selected_package and app.get("package") == selected_package:
+                selected_iid = iid
+
+        if selected_iid:
+            self.tree.selection_set(selected_iid)
+            self.tree.focus(selected_iid)
+            self.tree.see(selected_iid)
         self.update_count_label()
+        if selected_iid:
+            self.after_idle(self.update_selection_summary)
         if hasattr(self, "popup_summary_var"):
             user_apps = [a for a in self.all_apps if a.get("popup_risk") not in ("SYSTEM", None, "")]
             high = sum(a.get("popup_risk") == "HIGH" for a in user_apps)
