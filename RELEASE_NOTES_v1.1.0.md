@@ -9,3 +9,10 @@
 - Makes active special access prominent in App Assessment: Accessibility, Device Admin, Notification access, Overlay and Install unknown apps.
 - Keeps existing Cleanup/Review decisions and Shared Knowledge behaviour unchanged.
 - No knowledge database schema change.
+
+## Local UI test adjustment
+- Main app-list rows increased from 25 px to 40 px.
+- App icons increased to 30 × 30 px.
+- Icon gutter widened from 42 px to 46 px.
+- App-name column widened where necessary.
+- Local test only — do not publish as a GitHub Release yet.

@@ -2299,7 +2299,7 @@ class Cleaner(tk.Tk):
         style=ttk.Style(self)
         try: style.theme_use("vista")
         except Exception: pass
-        style.configure("Treeview", rowheight=25)
+        style.configure("Treeview", rowheight=40)
         style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
         style.configure("TButton", padding=(8,5))
         style.configure("TMenubutton", padding=(8,5))
@@ -2704,7 +2704,7 @@ class Cleaner(tk.Tk):
             "popup":"Popup ads", "reason":"Why it is shown"
         }
         widths = {
-            "checked":42,"priority":78,"status":95,"app":245,"identity":80,"app_type":115,
+            "checked":42,"priority":78,"status":95,"app":330,"identity":80,"app_type":115,
             "reputation":115,"package":250,"installer":145,"version":90,"installed":145,
             "updated":145,"special":180,"online":175,"popup":125,"reason":260
         }
@@ -2712,7 +2712,7 @@ class Cleaner(tk.Tk):
             self.tree.heading(c, text=heads[c], command=lambda col=c:self.sort_by(col, False))
             self.tree.column(c, width=widths[c], anchor="w")
         self.tree.heading("#0", text="")
-        self.tree.column("#0", width=42, minwidth=42, stretch=False, anchor="center")
+        self.tree.column("#0", width=46, minwidth=46, stretch=False, anchor="center")
         self.tree.column("checked", width=42, minwidth=42, stretch=False, anchor="center")
         # Core screen deliberately hides implementation-heavy fields. They remain
         # in the Treeview so existing actions/sorting/database logic stays intact.
@@ -3555,13 +3555,13 @@ class Cleaner(tk.Tk):
         path = str(app.get("icon_path") or "")
         if not path or not Path(path).is_file():
             return ""
-        key = (path, 28)
+        key = (path, 30)
         if key in self.icon_images:
             return self.icon_images[key]
         try:
             with Image.open(path) as im:
                 im = im.convert("RGBA")
-                im.thumbnail((28, 28), Image.Resampling.LANCZOS)
+                im.thumbnail((30, 30), Image.Resampling.LANCZOS)
                 photo = ImageTk.PhotoImage(im.copy())
             self.icon_images[key] = photo
             return photo
