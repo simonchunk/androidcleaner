@@ -26,8 +26,8 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_NAME = "The iPhone Guy - Android Cleaner v1.1.0"
-APP_VERSION = "1.2.1"
+APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
+APP_VERSION = "1.2.2"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
 ADMIN_PIN_ITERATIONS = 200000
@@ -823,10 +823,10 @@ def extract_app_icon(apk_path, sha256_hex):
 
 
 def pull_apk_icon(serial, app):
-    """Populate a cached icon without changing app identity/reputation.
+    """Populate a cached launcher icon for a flagged app.
 
-    Runs independently of label discovery so ordinary All Apps rows can gain
-    icons progressively in the background.
+    Modern Play installs are commonly split APKs. Density-specific launcher
+    artwork can live outside base.apk, so inspect density splits before base.
     """
     package = str(app.get("package") or "").strip()
     if not package:
@@ -834,64 +834,79 @@ def pull_apk_icon(serial, app):
     existing = str(app.get("icon_path") or "")
     if existing and Path(existing).is_file():
         return existing
-
-    adb = find_adb()
-    if not adb:
+    if not find_adb():
         return ""
 
+    pulled=[]
     try:
-        # Reuse an already-known hash/cache when possible.
         sha = str(app.get("sha256") or "").strip()
         if sha:
-            cached = icon_cache_path(sha)
+            cached=icon_cache_path(sha)
             if cached and Path(cached).is_file():
+                app["icon_path"]=cached
                 return cached
 
-        # -f is more reliable across Samsung/Pixel builds and still returns APK paths.
-        r = adb_run(["-s", serial, "shell", "pm", "path", package], timeout=12)
-        paths = []
+        r=adb_run(["-s",serial,"shell","pm","path",package],timeout=12)
+        paths=[]
         for line in (r.stdout or "").splitlines():
-            line = line.strip().replace("\r", "")
+            line=line.strip().replace("\r","")
             if line.startswith("package:"):
-                paths.append(line.split("package:", 1)[1].strip())
-        # Prefer base.apk.
-        remote = next((x for x in paths if x.endswith("/base.apk")), paths[0] if paths else "")
-        if not remote:
-            try:
-                ds = adb_run(["-s", serial, "shell", "dumpsys", "package", package], timeout=15)
-                mm = re.search(r"(?:sourceDir|codePath)=([^\\r\\n ]+)", ds.stdout or "")
-                if mm:
-                    candidate = mm.group(1).strip()
-                    remote = candidate if candidate.endswith(".apk") else candidate.rstrip("/") + "/base.apk"
-            except Exception:
-                pass
-        if not remote:
-            resolver_log(f"ICON {package}: no APK path returned by device")
+                path=line.split("package:",1)[1].strip()
+                if path and path not in paths:
+                    paths.append(path)
+        if not paths:
+            resolver_log(f"ICON {package}: no APK paths returned")
             return ""
 
-        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", package)
-        local = Path(tempfile.gettempdir()) / f"tig_icon_{safe}.apk"
-        pr = adb_run(["-s", serial, "pull", remote, str(local)], timeout=45)
-        if pr.returncode != 0 or not local.is_file() or local.stat().st_size <= 0:
+        safe=re.sub(r"[^A-Za-z0-9_.-]+","_",package)
+        # Pull base first to establish stable package hash.
+        base=next((x for x in paths if x.endswith("/base.apk")),paths[0])
+        base_local=Path(tempfile.gettempdir())/f"tig_icon_{safe}_base.apk"
+        pr=adb_run(["-s",serial,"pull",base,str(base_local)],timeout=45)
+        if pr.returncode != 0 or not base_local.is_file() or base_local.stat().st_size <= 0:
+            resolver_log(f"ICON {package}: base pull failed: {(pr.stderr or pr.stdout or '').strip()}")
             return ""
+        pulled.append(base_local)
+        h=hashlib.sha256()
+        with open(base_local,"rb") as fh:
+            for chunk in iter(lambda:fh.read(1024*1024),b""): h.update(chunk)
+        sha=h.hexdigest()
+        app["sha256"]=sha
 
-        h = hashlib.sha256()
-        with open(local, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                h.update(chunk)
-        sha = h.hexdigest()
-        app["sha256"] = sha
-        icon = extract_app_icon(local, sha)
-        if icon:
-            app["icon_path"] = icon
-        try:
-            local.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return icon
+        # Density splits are most likely to contain a directly renderable launcher
+        # PNG/WebP. Search them first, then other splits, then base.
+        def rank(path):
+            low=path.lower()
+            if any(x in low for x in ("xxxhdpi","xxhdpi","xhdpi","hdpi")): return 0
+            if "dpi" in low: return 1
+            if path == base: return 3
+            return 2
+        ordered=sorted(paths,key=rank)
+
+        for n,remote in enumerate(ordered):
+            local = base_local if remote == base else Path(tempfile.gettempdir())/f"tig_icon_{safe}_{n}.apk"
+            if remote != base:
+                pr=adb_run(["-s",serial,"pull",remote,str(local)],timeout=45)
+                if pr.returncode != 0 or not local.is_file() or local.stat().st_size <= 0:
+                    continue
+                pulled.append(local)
+            resolver_log(f"ICON {package}: inspecting {Path(remote).name}")
+            icon=extract_app_icon(local,sha)
+            if icon:
+                app["icon_path"]=icon
+                resolver_log(f"ICON {package}: success from {Path(remote).name}")
+                return icon
+
+        resolver_log(f"ICON {package}: no usable icon across {len(ordered)} APK split(s)")
+        return ""
     except Exception as exc:
         resolver_log(f"ICON background {package}: {exc!r}")
         return ""
+    finally:
+        for local in pulled:
+            try: local.unlink(missing_ok=True)
+            except Exception: pass
+
 
 
 def pull_apk_identity(serial, app):
@@ -2963,8 +2978,8 @@ class Cleaner(ctk.CTk):
             bg, fg, head, sel = "#0d1e2e", "#f4f7fb", "#102438", "#164d82"
             crit, high, check, prot = "#2c1820", "#261f17", "#222216", "#0a1722"
         else:
-            bg, fg, head, sel = "#ffffff", "#142536", "#eef3f8", "#d7eaff"
-            crit, high, check, prot = "#fff0f2", "#fff6e8", "#fffbe8", "#f2f5f8"
+            bg, fg, head, sel = "#f8fafc", "#102030", "#dfe8f0", "#b9d9f7"
+            crit, high, check, prot = "#f7dfe3", "#f5ead5", "#f4efcf", "#e5ebf0"
         style.configure("Modern.Treeview", background=bg, fieldbackground=bg,
                         foreground=fg, rowheight=64, borderwidth=0,
                         font=("Segoe UI",10))
@@ -2978,18 +2993,31 @@ class Cleaner(ctk.CTk):
         self.tree.tag_configure("protected",background=prot,foreground="#708396")
         self.tree.tag_configure("baseline",foreground="#708396")
 
-    def _scan_ui(self, active, message="Scanning connected phone…"):
+    def _scan_ui(self, active, message="Scanning connected phone…", current=None, total=None):
         if not hasattr(self, "scan_overlay"):
             return
         if active:
-            self.scan_message_var.set(message)
+            if current is not None and total:
+                pct=max(0.0,min(1.0,float(current)/float(total)))
+                self.scan_message_var.set(f"{message}  {current}/{total}")
+                self.scan_progress.configure(mode="determinate")
+                self.scan_progress.stop()
+                self.scan_progress.set(pct)
+                if hasattr(self,"scan_percent_var"):
+                    self.scan_percent_var.set(f"{int(pct*100)}%")
+            else:
+                self.scan_message_var.set(message)
+                self.scan_progress.configure(mode="indeterminate")
+                self.scan_progress.start()
+                if hasattr(self,"scan_percent_var"):
+                    self.scan_percent_var.set("")
             self.scan_overlay.place(relx=0.5, rely=0.5, anchor="center")
             self.scan_overlay.lift()
-            self.scan_progress.start()
             if hasattr(self,"bottom_status_var"): self.bottom_status_var.set(message)
         else:
             self.scan_progress.stop()
             self.scan_overlay.place_forget()
+            if hasattr(self,"scan_percent_var"): self.scan_percent_var.set("")
             if hasattr(self,"bottom_status_var"): self.bottom_status_var.set("Ready")
 
     def apply_theme(self):
@@ -3213,7 +3241,10 @@ class Cleaner(ctk.CTk):
         ctk.CTkLabel(self.scan_overlay,textvariable=self.scan_message_var,text_color=C["muted"],
                      font=("Segoe UI",11)).pack(padx=28,pady=(0,14))
         self.scan_progress=ctk.CTkProgressBar(self.scan_overlay,width=280,height=8,mode="indeterminate")
-        self.scan_progress.pack(padx=28,pady=(0,24))
+        self.scan_progress.pack(padx=28,pady=(0,6))
+        self.scan_percent_var=tk.StringVar(value="")
+        ctk.CTkLabel(self.scan_overlay,textvariable=self.scan_percent_var,text_color=C["muted"],
+                     font=("Segoe UI",10,"bold")).pack(padx=28,pady=(0,18))
 
         # ASSESSMENT CARD
         right=ctk.CTkFrame(main,fg_color=C["card"],corner_radius=12,border_width=1,border_color=C["line"])
@@ -3738,6 +3769,7 @@ class Cleaner(ctk.CTk):
         self._scan_ui(True, "Reading installed apps and device diagnostics…")
         serial = self.serial()
         if not serial:
+            self._scan_ui(False)
             messagebox.showwarning(
                 "Device not ready",
                 "Enable USB debugging and approve this PC."
@@ -3788,6 +3820,9 @@ class Cleaner(ctk.CTk):
                 rows = []
                 for i, app in enumerate(apps, 1):
                     self.status(f"Reading metadata {i}/{len(apps)}")
+                    if i == 1 or i == len(apps) or i % 5 == 0:
+                        self.after(0, lambda n=i,t=len(apps): self._scan_ui(
+                            True, "Reading app metadata", n, t))
                     if app.get("is_system"):
                         # All Apps must be literal, but a 400+ package phone should not
                         # require hundreds of dumpsys calls just to show system inventory.
@@ -3872,6 +3907,7 @@ class Cleaner(ctk.CTk):
                 # If the cable/device changed while this scan was running, discard
                 # its results rather than painting stale customer data onto the UI.
                 if scan_generation != self._scan_generation or serial != self._selected_serial:
+                    self.after(0, lambda:self._scan_ui(False))
                     return
 
                 knowledge_record_scan(rows, man, model, ver)
@@ -3880,6 +3916,7 @@ class Cleaner(ctk.CTk):
                 self.sort_internal()
                 self.after(0, self.update_baseline_label)
                 self.after(0, self.apply_view)
+                self.after(0, lambda:self._scan_ui(False))
                 if self._open_repair_outcome_after_scan and self.pending_repair_apps:
                     self._open_repair_outcome_after_scan = False
                     self.after(250, self.record_repair_outcome)
@@ -3913,6 +3950,7 @@ class Cleaner(ctk.CTk):
                     self.status(f"Scan complete: {len(rows)} apps • 0 worth checking")
 
             except Exception as e:
+                self.after(0, lambda:self._scan_ui(False))
                 self.after(
                     0, lambda: messagebox.showerror("Scan failed", str(e))
                 )
@@ -4017,7 +4055,9 @@ class Cleaner(ctk.CTk):
     def refresh_checkbox_cells(self):
         for iid in self.tree.get_children(""):
             pkg = self.tree.set(iid, "package")
-            self.tree.set(iid, "checked", "☑" if pkg in self.checked_packages else "☐")
+            app = self.rows.get(iid)
+            self.tree.set(iid, "checked", "🔒" if app and self._is_protected_app(app)
+                          else ("☑" if pkg in self.checked_packages else "☐"))
         self.update_count_label()
 
     def on_tree_click(self, event):
@@ -4052,12 +4092,14 @@ class Cleaner(ctk.CTk):
         self.refresh_checkbox_cells()
 
     def action_apps(self):
-        checked = [a for a in self.all_apps if a.get("package") in self.checked_packages]
+        checked = [a for a in self.all_apps
+                   if a.get("package") in self.checked_packages and not self._is_protected_app(a)]
         if checked:
             return checked
         ids = self.tree.selection()
         pkgs = {self.tree.set(i, "package") for i in ids}
-        return [a for a in self.all_apps if a.get("package") in pkgs]
+        return [a for a in self.all_apps
+                if a.get("package") in pkgs and not self._is_protected_app(a)]
 
     def _tree_icon_for_app(self, app):
         path = str(app.get("icon_path") or "")
@@ -4112,7 +4154,7 @@ class Cleaner(ctk.CTk):
 
     def _is_protected_app(self, app):
         t = str(app.get("app_type") or app.get("type") or "").upper().strip()
-        return t in ("SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM")
+        return t in ("SYSTEM", "OEM / SYSTEM", "SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM")
 
     def apply_view(self):
         mode = self.view_var.get()
@@ -4228,7 +4270,7 @@ class Cleaner(ctk.CTk):
                 "", "end",
                 image=self._tree_icon_for_app(app),
                 values=(
-                    "☑" if app["package"] in self.checked_packages else "☐",
+                    ("🔒" if self._is_protected_app(app) else ("☑" if app["package"] in self.checked_packages else "☐")),
                     app["app_name"],
                     app["priority"],
                     app.get("app_type", "UNKNOWN"),
