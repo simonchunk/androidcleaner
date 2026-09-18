@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -4042,6 +4042,10 @@ class Cleaner(ctk.CTk):
                 self.sort_internal()
                 self.after(0, self.update_baseline_label)
                 self.after(0, self.apply_view)
+                # Icon discovery is an independent post-scan pipeline. Do not rely
+                # on name resolution/retriage to start it: a fully cached scan may
+                # have no resolver work at all.
+                self.after(50, self.start_background_icon_discovery)
                 self.after(0, lambda:self._scan_ui(False))
                 if self._open_repair_outcome_after_scan and self.pending_repair_apps:
                     self._open_repair_outcome_after_scan = False
@@ -4259,24 +4263,46 @@ class Cleaner(ctk.CTk):
         ]
         work.sort(key=lambda a: {"CRITICAL":0,"HIGH":1,"CHECK":2}.get(a.get("priority"),3))
         total = len(work)
+        resolver_log(
+            f"ICON PIPELINE START serial={serial} generation={token} "
+            f"candidates={total} packages=" +
+            ",".join(str(a.get("package") or "") for a in work)
+        )
         if hasattr(self, "icon_status_var"):
             self.icon_status_var.set(f"Icons: 0/{total} loaded")
+        if not work:
+            resolver_log(f"ICON PIPELINE FINISH serial={serial}: no suspicious/review candidates")
+            return
 
         def worker():
             done = 0
+            attempted = 0
             for app in work:
                 if token != getattr(self, "_icon_generation", None) or serial != self.current_serial():
+                    resolver_log(f"ICON PIPELINE CANCEL serial={serial} generation={token}: device/generation changed")
                     return
-                if app.get("icon_path") and Path(str(app["icon_path"])).is_file():
+                package = str(app.get("package") or "")
+                existing = str(app.get("icon_path") or "")
+                if existing and Path(existing).is_file() and Path(existing).stat().st_size > 100:
                     done += 1
+                    resolver_log(f"ICON PIPELINE CACHE {package}: {existing}")
                 else:
+                    attempted += 1
+                    resolver_log(f"ICON PIPELINE QUEUE {attempted}/{total} {package}: invoking device renderer")
                     icon = pull_apk_icon(serial, app)
                     if icon:
                         done += 1
+                        resolver_log(f"ICON PIPELINE RESULT {package}: loaded {icon}")
+                    else:
+                        resolver_log(f"ICON PIPELINE RESULT {package}: no icon")
                 if hasattr(self, "icon_status_var"):
                     self.after(0, lambda d=done,t=total:self.icon_status_var.set(f"Icons: {d}/{t} loaded"))
                 self.after(0, self.apply_view)
-        threading.Thread(target=worker, daemon=True).start()
+            resolver_log(
+                f"ICON PIPELINE FINISH serial={serial} generation={token}: "
+                f"loaded={done}/{total} attempted={attempted}"
+            )
+        threading.Thread(target=worker, daemon=True, name=f"icon-pipeline-{token}").start()
 
     def _is_protected_app(self, app):
         t = str(app.get("app_type") or app.get("type") or "").upper().strip()
