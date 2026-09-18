@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -551,7 +551,7 @@ def extract_app_icon(apk_path, sha256_hex):
         if aapt2:
             rr = subprocess.run([str(aapt2), "dump", "badging", str(apk_path)],
                                 capture_output=True, text=True, timeout=15,
-                                creationflags=CREATE_NO_WINDOW)
+                                creationflags=_flags())
             badging = (rr.stdout or "") + "\n" + (rr.stderr or "")
             reported = []
             for mm in re.finditer(r"application-icon-[^:]+:'([^']+)'", badging):
@@ -843,8 +843,9 @@ def pull_device_rendered_icon(serial, app):
 
     helper = find_icon_helper()
     if not helper:
-        resolver_log(f"ICON DEVICE {package}: bundled icon-helper.jar missing")
+        resolver_log(f"ICON DEVICE {package}: bundled icon-helper.jar missing; APP_DIR={APP_DIR}")
         return ""
+    resolver_log(f"ICON DEVICE {package}: helper found {helper}")
 
     # Stable cache without pulling the APK. Updating/reinstalling the app changes
     # version/update identity and therefore creates a fresh cache entry.
@@ -866,27 +867,48 @@ def pull_device_rendered_icon(serial, app):
 
     try:
         if serial not in _ICON_HELPER_READY:
+            resolver_log(f"ICON DEVICE {package}: pushing helper to {remote_jar}")
             push = adb_run(["-s", serial, "push", str(helper), remote_jar], timeout=30)
             if push.returncode != 0:
-                resolver_log(f"ICON DEVICE {package}: helper push failed: {(push.stderr or push.stdout or '').strip()}")
+                resolver_log(f"ICON DEVICE {package}: helper push failed rc={push.returncode}: {(push.stderr or push.stdout or '').strip()}")
                 return ""
+            resolver_log(f"ICON DEVICE {package}: helper push OK")
             _ICON_HELPER_READY.add(serial)
+        else:
+            # The phone may have rebooted or /data/local/tmp may have been cleaned
+            # while this desktop process stayed open. Verify the helper still exists.
+            check = adb_run(["-s", serial, "shell", "test", "-s", remote_jar], timeout=5)
+            if check.returncode != 0:
+                _ICON_HELPER_READY.discard(serial)
+                resolver_log(f"ICON DEVICE {package}: remote helper missing; re-pushing")
+                push = adb_run(["-s", serial, "push", str(helper), remote_jar], timeout=30)
+                if push.returncode != 0:
+                    resolver_log(f"ICON DEVICE {package}: helper re-push failed rc={push.returncode}: {(push.stderr or push.stdout or '').strip()}")
+                    return ""
+                _ICON_HELPER_READY.add(serial)
 
         # app_process runs as the shell user. The helper obtains Android's system
         # Context and PackageManager, so adaptive/vector icons are rendered by the
         # same framework that renders them in the launcher.
+        resolver_log(f"ICON DEVICE {package}: starting app_process renderer")
         run = adb_run([
             "-s", serial, "shell",
             f"CLASSPATH={remote_jar}",
             "app_process", "/system/bin", "IconFetcher",
             package, remote_png, "192"
         ], timeout=20)
+        output = ((run.stdout or "") + " " + (run.stderr or "")).strip()
+        resolver_log(f"ICON DEVICE {package}: app_process rc={run.returncode} output={output[:500]!r}")
         if run.returncode != 0:
-            resolver_log(f"ICON DEVICE {package}: helper failed: {(run.stderr or run.stdout or '').strip()}")
             return ""
 
+        stat = adb_run(["-s", serial, "shell", "stat", "-c", "%s", remote_png], timeout=5)
+        resolver_log(f"ICON DEVICE {package}: remote PNG size={(stat.stdout or '').strip()!r} stat_rc={stat.returncode}")
+
         pull = adb_run(["-s", serial, "pull", remote_png, str(local_tmp)], timeout=20)
-        if pull.returncode != 0 or not local_tmp.is_file() or local_tmp.stat().st_size <= 100:
+        local_size = local_tmp.stat().st_size if local_tmp.is_file() else 0
+        resolver_log(f"ICON DEVICE {package}: PNG pull rc={pull.returncode} bytes={local_size}")
+        if pull.returncode != 0 or local_size <= 100:
             resolver_log(f"ICON DEVICE {package}: PNG pull failed: {(pull.stderr or pull.stdout or '').strip()}")
             return ""
 
