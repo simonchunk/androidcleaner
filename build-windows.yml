@@ -1,0 +1,89 @@
+name: Build Windows Android Cleaner Installer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Android tools on runner
+        shell: powershell
+        run: |
+          $sdkmanager = Join-Path $env:ANDROID_HOME 'cmdline-tools\latest\bin\sdkmanager.bat'
+          if (!(Test-Path $sdkmanager)) {
+            $sdkmanager = (Get-ChildItem -Path (Join-Path $env:ANDROID_HOME 'cmdline-tools') -Filter sdkmanager.bat -Recurse | Select-Object -First 1).FullName
+          }
+          if (!$sdkmanager -or !(Test-Path $sdkmanager)) { throw 'sdkmanager.bat not found on GitHub Windows runner' }
+          & $sdkmanager 'platform-tools' 'build-tools;36.0.0'
+          if ($LASTEXITCODE -ne 0) { throw "sdkmanager failed with exit code $LASTEXITCODE" }
+
+      - name: Build self-contained Android Cleaner EXE
+        shell: powershell
+        run: |
+          pyinstaller --clean --noconfirm AndroidCleaner.spec
+          if (!(Test-Path 'dist\AndroidCleaner.exe')) { throw 'AndroidCleaner.exe was not built' }
+
+      - name: Stage application and bundled Android tools
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          New-Item -ItemType Directory -Force package\platform-tools | Out-Null
+          New-Item -ItemType Directory -Force package\build-tools | Out-Null
+
+          Copy-Item dist\AndroidCleaner.exe package\AndroidCleaner.exe
+          Copy-Item risk_rules.json,knowledge_seed.json,device_models.json,production_config.json package\
+          Copy-Item "$env:ANDROID_HOME\platform-tools\adb.exe" package\platform-tools\adb.exe
+          Copy-Item "$env:ANDROID_HOME\platform-tools\AdbWinApi.dll" package\platform-tools\AdbWinApi.dll
+          Copy-Item "$env:ANDROID_HOME\platform-tools\AdbWinUsbApi.dll" package\platform-tools\AdbWinUsbApi.dll
+          Copy-Item "$env:ANDROID_HOME\build-tools\36.0.0\aapt2.exe" package\build-tools\aapt2.exe
+
+          if (!(Test-Path 'package\platform-tools\adb.exe')) { throw 'adb.exe was not staged' }
+          if (!(Test-Path 'package\build-tools\aapt2.exe')) { throw 'aapt2.exe was not staged' }
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) { throw 'Inno Setup compiler was not installed' }
+
+      - name: Build Windows installer
+        shell: powershell
+        run: |
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+          $setup = Get-ChildItem -Path 'installer-output' -Filter 'The-iPhone-Guy-Android-Cleaner-Setup-v1.1.0.exe' -File | Select-Object -First 1
+          if (!$setup) { throw 'Installer EXE was not created' }
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Set-Content "$($setup.FullName).sha256"
+
+      - name: Show installer output
+        shell: powershell
+        run: |
+          Get-ChildItem -Recurse installer-output
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidCleaner-v1.1.0-Installer
+          path: |
+            installer-output/The-iPhone-Guy-Android-Cleaner-Setup-v1.1.0.exe
+            installer-output/The-iPhone-Guy-Android-Cleaner-Setup-v1.1.0.exe.sha256
+          if-no-files-found: error

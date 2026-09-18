@@ -16,3 +16,11 @@
 - Icon gutter widened from 42 px to 46 px.
 - App-name column widened where necessary.
 - Local test only — do not publish as a GitHub Release yet.
+
+## Local adaptive-icon test
+- Adds adaptive launcher icon discovery from common mipmap/drawable XML resources.
+- Uses bundled AAPT2 xmltree output when the APK contains compiled binary XML.
+- Composites raster adaptive foreground/background layers into a cached PNG.
+- Retains raster-icon fallback and the 40 px row / 30 px icon layout.
+- Unsupported vector-only layers fail safely with a blank icon and resolver-log entry.
+- Local test only; do not publish this build as a GitHub Release yet.

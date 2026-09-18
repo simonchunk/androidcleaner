@@ -12,6 +12,7 @@ import hmac
 import json
 import tempfile
 import zipfile
+import xml.etree.ElementTree as ET
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -532,10 +533,11 @@ def icon_cache_path(sha256_hex):
 
 
 def extract_app_icon(apk_path, sha256_hex):
-    """Extract the best raster launcher icon from an APK and cache it as PNG.
+    """Extract/render a launcher icon from an APK and cache it as PNG.
 
-    Adaptive/vector-only icons are deliberately skipped rather than guessed.
-    Many modern APKs still include raster launcher assets at one or more densities.
+    Handles ordinary raster icons plus common adaptive-icon XML where the
+    foreground/background resolve to raster drawables or simple color resources.
+    Falls back safely when a package uses a drawable we cannot render.
     """
     if not sha256_hex:
         return ""
@@ -562,32 +564,190 @@ def extract_app_icon(apk_path, sha256_hex):
             r"^application-icon-(\d+):'([^']+)'$", out, re.MULTILINE
         ):
             candidates.append((int(density), resource))
-
-        # Some packages only expose the generic application icon in badging.
         m = re.search(r"^application: .*?\bicon='([^']+)'", out, re.MULTILINE)
         if m:
             candidates.append((0, m.group(1)))
-
-        # Prefer the highest-density raster asset.
         candidates.sort(key=lambda x: x[0], reverse=True)
+
+        ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+
+        def save_image(im):
+            im = im.convert("RGBA")
+            im.thumbnail((96, 96), Image.Resampling.LANCZOS)
+            im.save(target, "PNG")
+            return str(target)
+
+        def open_raster(zf, resource):
+            if resource not in zf.namelist():
+                return None
+            if not resource.lower().endswith((".png", ".webp", ".jpg", ".jpeg")):
+                return None
+            from io import BytesIO
+            with Image.open(BytesIO(zf.read(resource))) as im:
+                return im.convert("RGBA").copy()
+
+        def drawable_candidates(zf, ref):
+            # @drawable/name, @mipmap/name, or a direct res/... path.
+            if not ref:
+                return []
+            ref = ref.strip()
+            if ref.startswith("res/"):
+                return [ref] if ref in zf.namelist() else []
+            m = re.match(r"@(?:[A-Za-z0-9_.]+:)?(drawable|mipmap)/([A-Za-z0-9_.]+)", ref)
+            if not m:
+                return []
+            kind, name = m.groups()
+            found = []
+            for n in zf.namelist():
+                if not n.startswith("res/"):
+                    continue
+                leaf = n.rsplit("/", 1)[-1]
+                folder = n.split("/", 2)[1]
+                if not (folder == kind or folder.startswith(kind + "-")):
+                    continue
+                if leaf.rsplit(".", 1)[0] == name:
+                    found.append(n)
+            # Prefer raster and higher-density folders; XML last.
+            def score(n):
+                folder = n.split("/", 2)[1]
+                density = {
+                    "xxxhdpi": 640, "xxhdpi": 480, "xhdpi": 320,
+                    "hdpi": 240, "mdpi": 160, "ldpi": 120
+                }
+                d = max((v for k, v in density.items() if k in folder), default=0)
+                raster = 10000 if n.lower().endswith((".png",".webp",".jpg",".jpeg")) else 0
+                return raster + d
+            return sorted(found, key=score, reverse=True)
+
+        def parse_xml_text(zf, resource):
+            if resource not in zf.namelist():
+                return None
+            raw = zf.read(resource)
+            # Compiled binary XML cannot be parsed by ElementTree. Ask AAPT2 to
+            # emit the XML tree, which preserves the resource references we need.
+            try:
+                return raw.decode("utf-8")
+            except Exception:
+                pass
+            try:
+                rr = subprocess.run(
+                    [aapt2, "dump", "xmltree", str(apk_path), "--file", resource],
+                    capture_output=True, text=True, timeout=20,
+                    creationflags=_flags()
+                )
+                if rr.returncode == 0:
+                    return rr.stdout or ""
+            except Exception:
+                return None
+            return None
+
+        def refs_from_adaptive_xml(zf, resource):
+            text = parse_xml_text(zf, resource)
+            if not text:
+                return "", ""
+            # Plain XML path (occasionally present in unpacked/test APKs).
+            try:
+                root = ET.fromstring(text)
+                bg = root.find("background")
+                fg = root.find("foreground")
+                bgref = bg.get(ANDROID_NS + "drawable", "") if bg is not None else ""
+                fgref = fg.get(ANDROID_NS + "drawable", "") if fg is not None else ""
+                if bgref or fgref:
+                    return bgref, fgref
+            except Exception:
+                pass
+
+            # AAPT2 xmltree output. Capture the drawable attribute following each
+            # background/foreground element.
+            bgref = fgref = ""
+            current = None
+            for line in text.splitlines():
+                stripped = line.strip()
+                if "E: background" in stripped:
+                    current = "bg"
+                elif "E: foreground" in stripped:
+                    current = "fg"
+                elif stripped.startswith("E: ") and "background" not in stripped and "foreground" not in stripped:
+                    current = None
+                if current and "A: android:drawable" in stripped:
+                    m = re.search(r'="([^"]+)"', stripped)
+                    if m:
+                        if current == "bg":
+                            bgref = m.group(1)
+                        else:
+                            fgref = m.group(1)
+            return bgref, fgref
+
+        def render_ref(zf, ref):
+            for res in drawable_candidates(zf, ref):
+                im = open_raster(zf, res)
+                if im is not None:
+                    return im
+            return None
 
         with zipfile.ZipFile(apk_path, "r") as zf:
             names = set(zf.namelist())
+
+            # 1. Ordinary raster launcher icon.
             for _density, resource in candidates:
-                if resource not in names:
-                    continue
-                if not resource.lower().endswith((".png", ".webp", ".jpg", ".jpeg")):
-                    continue
                 try:
-                    from io import BytesIO
-                    with Image.open(BytesIO(zf.read(resource))) as im:
-                        im = im.convert("RGBA")
-                        im.thumbnail((96, 96), Image.Resampling.LANCZOS)
-                        im.save(target, "PNG")
-                    resolver_log(f"ICON cached: {target.name} from {resource}")
-                    return str(target)
+                    im = open_raster(zf, resource)
+                    if im is not None:
+                        resolver_log(f"ICON raster: {resource}")
+                        return save_image(im)
                 except Exception as exc:
-                    resolver_log(f"ICON decode failed {resource}: {exc!r}")
+                    resolver_log(f"ICON raster decode failed {resource}: {exc!r}")
+
+            # 2. Adaptive icon XML. Common case: XML launcher icon references
+            # raster foreground/background resources.
+            xml_candidates = []
+            for _density, resource in candidates:
+                if resource.lower().endswith(".xml") and resource in names:
+                    xml_candidates.append(resource)
+
+            # Badging can point at a legacy fallback while adaptive resources sit
+            # in mipmap-anydpi-v26. Look for likely launcher XML names too.
+            for n in names:
+                low = n.lower()
+                if ("/mipmap-anydpi" in low or "/drawable-anydpi" in low) and low.endswith(".xml"):
+                    if any(k in low for k in ("ic_launcher", "launcher", "app_icon", "/icon")):
+                        xml_candidates.append(n)
+
+            seen = set()
+            for resource in xml_candidates:
+                if resource in seen:
+                    continue
+                seen.add(resource)
+                try:
+                    bgref, fgref = refs_from_adaptive_xml(zf, resource)
+                    if not (bgref or fgref):
+                        continue
+                    bg = render_ref(zf, bgref)
+                    fg = render_ref(zf, fgref)
+                    if bg is None and fg is None:
+                        continue
+
+                    size = 192
+                    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+                    if bg is not None:
+                        bg.thumbnail((size, size), Image.Resampling.LANCZOS)
+                        bx = (size - bg.width)//2
+                        by = (size - bg.height)//2
+                        canvas.alpha_composite(bg, (bx, by))
+                    if fg is not None:
+                        # Android adaptive foreground has safe-zone padding; keep
+                        # some breathing room rather than cropping the artwork.
+                        max_fg = int(size * 0.82)
+                        fg.thumbnail((max_fg, max_fg), Image.Resampling.LANCZOS)
+                        fx = (size - fg.width)//2
+                        fy = (size - fg.height)//2
+                        canvas.alpha_composite(fg, (fx, fy))
+
+                    resolver_log(f"ICON adaptive: {resource} bg={bgref!r} fg={fgref!r}")
+                    return save_image(canvas)
+                except Exception as exc:
+                    resolver_log(f"ICON adaptive failed {resource}: {exc!r}")
+
     except Exception as exc:
         resolver_log(f"ICON extraction failed: {exc!r}")
 
