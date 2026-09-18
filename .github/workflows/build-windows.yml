@@ -43,8 +43,23 @@ jobs:
             $sdkmanager = (Get-ChildItem -Path (Join-Path $env:ANDROID_HOME 'cmdline-tools') -Filter sdkmanager.bat -Recurse | Select-Object -First 1).FullName
           }
           if (!$sdkmanager -or !(Test-Path $sdkmanager)) { throw 'sdkmanager.bat not found on GitHub Windows runner' }
-          & $sdkmanager 'platform-tools' 'build-tools;36.0.0'
+          & $sdkmanager 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36'
           if ($LASTEXITCODE -ne 0) { throw "sdkmanager failed with exit code $LASTEXITCODE" }
+
+      - name: Build Android on-device icon helper
+        shell: powershell
+        run: |
+          if (!(Test-Path 'IconFetcher.java')) { throw 'IconFetcher.java must be in the repository root' }
+          New-Item -ItemType Directory -Force icon-helper-build\classes | Out-Null
+          $androidJar = Join-Path $env:ANDROID_HOME 'platforms\android-36\android.jar'
+          if (!(Test-Path $androidJar)) { throw 'android.jar not found' }
+          javac -source 8 -target 8 -cp $androidJar -d icon-helper-build\classes IconFetcher.java
+          if ($LASTEXITCODE -ne 0) { throw "javac failed with exit code $LASTEXITCODE" }
+          $d8 = Join-Path $env:ANDROID_HOME 'build-tools\36.0.0\d8.bat'
+          if (!(Test-Path $d8)) { throw 'd8.bat not found' }
+          & $d8 --min-api 26 --output icon-helper-build\icon-helper.jar icon-helper-build\classes\IconFetcher.class
+          if ($LASTEXITCODE -ne 0) { throw "d8 failed with exit code $LASTEXITCODE" }
+          if (!(Test-Path 'icon-helper-build\icon-helper.jar')) { throw 'icon-helper.jar was not built' }
 
       - name: Build self-contained Android Cleaner EXE
         shell: powershell
@@ -65,9 +80,11 @@ jobs:
           Copy-Item "$env:ANDROID_HOME\platform-tools\AdbWinApi.dll" package\platform-tools\AdbWinApi.dll
           Copy-Item "$env:ANDROID_HOME\platform-tools\AdbWinUsbApi.dll" package\platform-tools\AdbWinUsbApi.dll
           Copy-Item "$env:ANDROID_HOME\build-tools\36.0.0\aapt2.exe" package\build-tools\aapt2.exe
+          Copy-Item icon-helper-build\icon-helper.jar package\icon-helper.jar
 
           if (!(Test-Path 'package\platform-tools\adb.exe')) { throw 'adb.exe was not staged' }
           if (!(Test-Path 'package\build-tools\aapt2.exe')) { throw 'aapt2.exe was not staged' }
+          if (!(Test-Path 'package\icon-helper.jar')) { throw 'icon-helper.jar was not staged' }
 
       - name: Install Inno Setup
         shell: powershell
