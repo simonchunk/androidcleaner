@@ -22,11 +22,11 @@ from collections import Counter
 import tkinter as tk
 import customtkinter as ctk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.14"
+APP_VERSION = "1.2.15"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2804,7 +2804,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.14 Scanner Icons UI Polish loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.15 ImageDraw Boot Fix loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
