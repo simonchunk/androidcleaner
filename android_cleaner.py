@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.17"
+APP_VERSION = "1.2.18"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2804,7 +2804,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.17 UI Finishing loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.18 Structural UI Fix loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -3433,9 +3433,9 @@ class Cleaner(ctk.CTk):
             self.tree.heading(c,text=heads[c],command=lambda col=c:self.sort_by(col,False))
             self.tree.column(c,width=widths[c],anchor="w")
         self.tree.heading("#0",text="")
-        self.tree.column("#0",width=72,minwidth=72,stretch=False,anchor="center")
-        self.tree.column("checked",width=46,minwidth=46,stretch=False,anchor="center")
-        self.tree["displaycolumns"]=("checked","app","priority","app_type","installer","installed")
+        self.tree.column("#0",width=88,minwidth=88,stretch=False,anchor="center")
+        self.tree.column("checked",width=0,minwidth=0,stretch=False,anchor="center")
+        self.tree["displaycolumns"]=("app","priority","app_type","installer","installed")
         ys=ctk.CTkScrollbar(table,orientation="vertical",command=self._tree_yview,
                             width=12,corner_radius=6,fg_color=C["card"],
                             button_color="#24445e",button_hover_color=C["blue"])
@@ -3444,8 +3444,8 @@ class Cleaner(ctk.CTk):
         ys.pack(side="right",fill="y",padx=(4,0))
         self.tree.bind("<Button-1>",self.on_tree_click,add="+")
         self.tree.bind("<<TreeviewSelect>>",lambda e:self.update_selection_summary())
-        self.tree.bind("<MouseWheel>",lambda e:(self.after_idle(self._refresh_risk_badges),self.after_idle(self._refresh_checkbox_widgets)),add="+")
-        self.tree.bind("<Configure>",lambda e:(self.after_idle(self._refresh_risk_badges),self.after_idle(self._refresh_checkbox_widgets)),add="+")
+        self.tree.bind("<MouseWheel>",lambda e:self.after_idle(self._refresh_risk_badges),add="+")
+        self.tree.bind("<Configure>",lambda e:self.after_idle(self._refresh_risk_badges),add="+")
         self.tree.tag_configure("critical",background="#35131d",foreground="#ffffff")
         self.tree.tag_configure("high",background="#2b2114",foreground="#ffffff")
         self.tree.tag_configure("check",background="#252414",foreground="#ffffff")
@@ -3478,15 +3478,16 @@ class Cleaner(ctk.CTk):
         self.assessment_rep_var=tk.StringVar(value="UNKNOWN")
         self.assessment_icon_image = None
 
-        assess_top = ctk.CTkFrame(right, fg_color="transparent")
+        assess_top = ctk.CTkFrame(right, fg_color="transparent", height=128)
         assess_top.pack(fill="x", padx=16, pady=(10,5))
+        assess_top.pack_propagate(False)
         assess_text = ctk.CTkFrame(assess_top, fg_color="transparent")
         assess_text.pack(side="left", fill="both", expand=True)
         ctk.CTkLabel(assess_text,text="App assessment",text_color=C["muted"],
                      font=("Segoe UI",11)).pack(anchor="w")
         ctk.CTkLabel(assess_text,textvariable=self.assessment_name_var,text_color=C["text"],
                      font=("Segoe UI",17,"bold"),justify="left",anchor="w",
-                     wraplength=300).pack(fill="x",pady=(4,4))
+                     wraplength=285).pack(fill="x",pady=(4,4))
         badge_row=ctk.CTkFrame(assess_text,fg_color="transparent")
         badge_row.pack(fill="x",anchor="w")
         self.assessment_risk_badge=ctk.CTkLabel(
@@ -3516,21 +3517,27 @@ class Cleaner(ctk.CTk):
         ctk.CTkLabel(right,textvariable=self.intel_history_var,text_color=C["text"],justify="left",
                      anchor="w",wraplength=410).pack(fill="x",padx=16,pady=(1,4))
 
-        risk=ctk.CTkFrame(right,fg_color=("#fff0f2","#2b1720"),corner_radius=10,border_width=1,border_color="#8d2c3b")
+        risk=ctk.CTkFrame(right,fg_color="#2b1720",corner_radius=10,border_width=1,border_color="#a63346")
         risk.pack(fill="x",padx=16,pady=4)
-        ctk.CTkLabel(risk,text="Why we're showing this",
-                     image=self._ui_icon("warning","#ff6477",18),compound="left",
-                     font=("Segoe UI",12,"bold"),
-                     text_color=C["text"]).pack(anchor="w",padx=12,pady=(7,2))
-        ctk.CTkLabel(risk,textvariable=self.intel_reason_var,text_color=("#5d2933","#e6cbd0"),
-                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,7))
+        risk_head=ctk.CTkFrame(risk,fg_color="transparent")
+        risk_head.pack(fill="x",padx=12,pady=(8,2))
+        ctk.CTkLabel(risk_head,text="",image=self._ui_icon("warning","#ff6477",18),
+                     width=22,height=22).pack(side="left",padx=(0,7))
+        ctk.CTkLabel(risk_head,text="Why we're showing this",font=("Segoe UI",12,"bold"),
+                     text_color=C["text"]).pack(side="left")
+        ctk.CTkLabel(risk,textvariable=self.intel_reason_var,text_color="#e6cbd0",
+                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,8))
 
         intel=ctk.CTkFrame(right,fg_color=C["card2"],corner_radius=10,border_width=1,border_color=C["line"])
         intel.pack(fill="x",padx=16,pady=4)
-        ctk.CTkLabel(intel,text="Repair intelligence",image=self._ui_icon("repair","#78bfff",18),compound="left",font=("Segoe UI",12,"bold"),
-                     text_color=C["text"]).pack(anchor="w",padx=12,pady=(7,2))
+        intel_head=ctk.CTkFrame(intel,fg_color="transparent")
+        intel_head.pack(fill="x",padx=12,pady=(8,2))
+        ctk.CTkLabel(intel_head,text="",image=self._ui_icon("repair","#78bfff",18),
+                     width=22,height=22).pack(side="left",padx=(0,7))
+        ctk.CTkLabel(intel_head,text="Repair intelligence",font=("Segoe UI",12,"bold"),
+                     text_color=C["text"]).pack(side="left")
         ctk.CTkLabel(intel,textvariable=self.intel_title_var,text_color=C["muted"],
-                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,7))
+                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,8))
 
         actions=ctk.CTkFrame(right,fg_color="transparent")
         actions.pack(fill="x",side="bottom",padx=16,pady=(6,10))
@@ -3588,41 +3595,53 @@ class Cleaner(ctk.CTk):
             resolver_log(f"ICON ASSESSMENT load failed {path}: {exc!r}")
             self.assessment_icon_label.configure(image=None, text="")
 
+    def _assessment_app(self):
+        """The right-hand panel follows technician focus, never removal selection."""
+        pkg=self._assessment_package
+        if pkg:
+            for app in self.all_apps:
+                if app.get("package")==pkg:
+                    return app
+        # If focus has not been established yet, use the actual focused row once.
+        try:
+            iid=self.tree.focus()
+            if iid:
+                app=self.rows.get(iid)
+                if app:
+                    self._assessment_package=app.get("package")
+                    return app
+        except Exception:
+            pass
+        return None
+
     def update_selection_summary(self):
-        n_checked = len(self.checked_packages)
-        if hasattr(self, "remove_button"):
-            self.remove_button.configure(text=("Remove Apps" if n_checked > 1 else "Remove App"))
-        apps = self.action_apps()
-        if not apps:
+        n_checked=len(self.checked_packages)
+        if hasattr(self,"remove_button"):
+            self.remove_button.configure(text=("Remove Apps" if n_checked>1 else "Remove App"))
+
+        a=self._assessment_app()
+        if not a:
             self.selection_var.set("Select an app to review it.")
             self.assessment_name_var.set("Select an app to review it.")
             self.assessment_rep_var.set("")
             if hasattr(self,"assessment_risk_badge"):
                 self.assessment_risk_badge.configure(text="",fg_color="#24384a")
-            self.intel_title_var.set(""); self.intel_history_var.set(""); self.intel_reason_var.set("")
+            self.intel_title_var.set("")
+            self.intel_history_var.set("")
+            self.intel_reason_var.set("")
             self._set_assessment_icon(None)
             return
-        if len(apps) > 1:
-            self.selection_var.set(f"{len(apps)} apps selected")
-            self.assessment_name_var.set(f"{len(apps)} apps selected")
-            self.assessment_rep_var.set("")
-            if hasattr(self,"assessment_risk_badge"):
-                self.assessment_risk_badge.configure(text="MULTI",fg_color="#24679b")
-            self.intel_title_var.set("Repair intelligence will be recorded per app; group removals remain group-associated evidence.")
-            self.intel_history_var.set(""); self.intel_reason_var.set("")
-            self._set_assessment_icon(None)
-            return
-        a = apps[0]
+
         name=a.get("app_name") or a.get("package","")
         rep=a.get("reputation") or "UNKNOWN"
         priority=a.get("priority") or "INFO"
-        self.selection_var.set(f"{name}\n{priority}   •   {rep}")
+        self.selection_var.set(name)
         self.assessment_name_var.set(name)
         self.assessment_rep_var.set(rep)
         risk_colors={
             "CRITICAL":"#ef233c",
-            "HIGH":"#f28c00",
-            "CHECK":"#d6a800",
+            "HIGH":"#ff9700",
+            "CHECK":"#d9ad00",
             "INFO":"#2878ad",
             "BASELINE":"#40566a",
         }
@@ -4363,39 +4382,45 @@ class Cleaner(ctk.CTk):
         self.count_var.set(f"Showing {len(visible)} of {len(self.all_apps)} apps • {selected} selected")
 
     def refresh_checkbox_cells(self):
-        for iid in self.tree.get_children(""):
-            pkg = self.tree.set(iid, "package")
-            app = self.rows.get(iid)
-            self.tree.set(iid, "checked", "LOCK" if app and self._is_protected_app(app) else "")
-            self.after_idle(self._refresh_checkbox_widgets)
+        for iid,app in list(self.rows.items()):
+            try:
+                self.tree.item(iid,image=self._tree_icon_for_app(app))
+            except Exception:
+                pass
         self.update_count_label()
+        self.update_selection_summary()
+
 
     def on_tree_click(self, event):
-        if self.tree.identify_region(event.x, event.y) != "cell":
+        region=self.tree.identify_region(event.x,event.y)
+        if region not in ("cell","tree"):
             return
-        row = self.tree.identify_row(event.y)
+        row=self.tree.identify_row(event.y)
         if not row:
             return
-        # A normal click anywhere on a row now makes it the active app. This fixes
-        # the workshop UI feeling non-clickable while retaining checkbox multi-select.
+
         self.tree.selection_set(row)
         self.tree.focus(row)
-        try:
-            self._assessment_package = self.tree.set(row, "package") or self._assessment_package
-        except Exception:
-            pass
-        if self.tree.identify_column(event.x) == "#1":
-            pkg = self.tree.set(row, "package")
-            app = self.rows.get(row)
+        app=self.rows.get(row)
+        if app:
+            self._assessment_package=app.get("package")
+
+        # v1.2.18: checkbox is physically drawn inside the #0 composite image.
+        # Clicking #0 therefore toggles the removal checkbox.
+        if self.tree.identify_column(event.x)=="#0":
             if app and self._is_protected_app(app):
+                self.after_idle(self.update_selection_summary)
                 return
-            if pkg in self.checked_packages:
-                self.checked_packages.remove(pkg)
-            else:
-                self.checked_packages.add(pkg)
-            self.tree.set(row, "checked", "")
-            self.after_idle(self._refresh_checkbox_widgets)
-            self.update_count_label()
+            pkg=app.get("package") if app else ""
+            if pkg:
+                if pkg in self.checked_packages:
+                    self.checked_packages.remove(pkg)
+                else:
+                    self.checked_packages.add(pkg)
+                # Different checked state = different cached composite image.
+                self.tree.item(row,image=self._tree_icon_for_app(app))
+                self.update_count_label()
+
         self.after_idle(self.update_selection_summary)
 
     def check_all_visible(self):
@@ -4419,22 +4444,53 @@ class Cleaner(ctk.CTk):
                 if a.get("package") in pkgs and not self._is_protected_app(a)]
 
     def _tree_icon_for_app(self, app):
+        """Return one stable Treeview image containing app icon + checkbox.
+
+        ttk.Treeview only supports a real image in column #0. Previous builds
+        attempted to place Canvas widgets over another cell; on Windows those
+        widgets can be painted behind the native Treeview and disappear.
+        Compositing the checkbox into #0 makes it deterministic.
+        """
         path = str(app.get("icon_path") or "")
-        if not path or not Path(path).is_file():
-            return ""
-        key = (path, 46)
-        if key in self.icon_images:
-            return self.icon_images[key]
-        try:
-            with Image.open(path) as im:
-                im = im.convert("RGBA")
-                im.thumbnail((46, 46), Image.Resampling.LANCZOS)
-                photo = ImageTk.PhotoImage(im.copy())
-            self.icon_images[key] = photo
-            return photo
-        except Exception as exc:
-            resolver_log(f"ICON UI load failed {path}: {exc!r}")
-            return ""
+        pkg = str(app.get("package") or "")
+        protected = self._is_protected_app(app)
+        checked = pkg in self.checked_packages
+        cache_key = ("row-composite", path, pkg, checked, protected, 82, 52)
+        if cache_key in self.icon_images:
+            return self.icon_images[cache_key]
+
+        canvas = Image.new("RGBA", (82,52), (0,0,0,0))
+        draw = ImageDraw.Draw(canvas)
+
+        # Android application icon.
+        if path and Path(path).is_file():
+            try:
+                with Image.open(path) as im:
+                    im=im.convert("RGBA")
+                    im.thumbnail((46,46),Image.Resampling.LANCZOS)
+                    x=2+(46-im.width)//2
+                    y=3+(46-im.height)//2
+                    canvas.alpha_composite(im,(x,y))
+            except Exception as exc:
+                resolver_log(f"ICON UI load failed {path}: {exc!r}")
+
+        # Crisp app-selection control at the right of the icon.
+        x0,y0,x1,y1=60,17,76,33
+        if protected:
+            # Small lock drawn by us; no emoji/font fallback.
+            draw.rounded_rectangle((61,21,75,34),radius=3,fill="#203747",outline="#627487",width=2)
+            draw.arc((64,13,72,25),180,360,fill="#7e94a7",width=2)
+        else:
+            outline="#46b7ff" if checked else "#9ab0c2"
+            fill="#168df2" if checked else "#10283b"
+            draw.rounded_rectangle((x0,y0,x1,y1),radius=3,fill=fill,outline=outline,width=2)
+            if checked:
+                draw.line((63,25,67,29,74,20),fill="#ffffff",width=2,joint="curve")
+
+        photo=ImageTk.PhotoImage(canvas)
+        self.icon_images[cache_key]=photo
+        return photo
+
 
     def _icon_candidate_signature(self):
         serial = self.serial()
@@ -4589,51 +4645,8 @@ class Cleaner(ctk.CTk):
         return t in ("SYSTEM", "OEM / SYSTEM", "SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM")
 
     def _clear_checkbox_widgets(self):
-        for widget in getattr(self,"_checkbox_widgets",[]):
-            try:
-                widget.destroy()
-            except Exception:
-                pass
-        self._checkbox_widgets=[]
-
-    def _checkbox_widget_click(self, iid):
-        app=self.rows.get(iid)
-        if not app or self._is_protected_app(app):
-            return
-        pkg=app.get("package")
-        if pkg in self.checked_packages:
-            self.checked_packages.remove(pkg)
-        else:
-            self.checked_packages.add(pkg)
-        self.tree.selection_set(iid)
-        self.tree.focus(iid)
-        self._assessment_package=pkg
-        self.update_count_label()
-        self.update_selection_summary()
-        self._refresh_checkbox_widgets()
-
-    def _refresh_checkbox_widgets(self):
-        self._clear_checkbox_widgets()
-        widgets=[]
-        for iid,app in list(getattr(self,"rows",{}).items()):
-            if self._is_protected_app(app):
-                continue
-            box=self.tree.bbox(iid,"checked")
-            if not box:
-                continue
-            x,y,w,h=box
-            selected=app.get("package") in self.checked_packages
-            outer="#38a9ff" if selected else "#7890a4"
-            fill="#168ee0" if selected else "#102536"
-            cb=tk.Canvas(self.tree,width=22,height=22,bg=self.tree.tag_cget(app.get("priority","").lower(),"background") or "#0d1e2e",
-                         highlightthickness=0,bd=0,cursor="hand2")
-            cb.create_rectangle(3,3,19,19,outline=outer,fill=fill,width=2)
-            if selected:
-                cb.create_line(6,11,10,15,17,7,fill="#ffffff",width=2,smooth=True)
-            cb.place(x=x+(w-22)//2,y=y+(h-22)//2,width=22,height=22)
-            cb.bind("<Button-1>",lambda e,row=iid:self._checkbox_widget_click(row))
-            widgets.append(cb)
-        self._checkbox_widgets=widgets
+        # v1.2.18: no floating Treeview checkbox widgets are used.
+        return
 
     def _clear_risk_badges(self):
         for widget in getattr(self, "_risk_badge_widgets", []):
@@ -4679,7 +4692,6 @@ class Cleaner(ctk.CTk):
     def _tree_yview(self, *args):
         self.tree.yview(*args)
         self.after_idle(self._refresh_risk_badges)
-        self.after_idle(self._refresh_checkbox_widgets)
 
     def apply_view(self):
         mode = self.view_var.get()
@@ -4792,14 +4804,8 @@ class Cleaner(ctk.CTk):
             ]
 
         # Preserve the technician's selected app across icon/name/retriage repaints.
+        # Assessment focus is persistent and independent of filtered Treeview state.
         selected_package = self._assessment_package
-        try:
-            selected_ids = self.tree.selection()
-            if selected_ids:
-                selected_package = self.tree.set(selected_ids[0], "package") or selected_package
-                self._assessment_package = selected_package
-        except Exception:
-            pass
 
         for iid in self.tree.get_children():
             self.tree.delete(iid)
@@ -4850,7 +4856,6 @@ class Cleaner(ctk.CTk):
         if self._assessment_package:
             self.after_idle(self.update_selection_summary)
         self.after_idle(self._refresh_risk_badges)
-        self.after_idle(self._refresh_checkbox_widgets)
         if hasattr(self, "popup_summary_var"):
             user_apps = [a for a in self.all_apps if a.get("popup_risk") not in ("SYSTEM", None, "")]
             high = sum(a.get("popup_risk") == "HIGH" for a in user_apps)
