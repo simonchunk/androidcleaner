@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.8"
+APP_VERSION = "1.2.9"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2733,6 +2733,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
+        resolver_log("BUILD MARKER Android Cleaner v1.2.9 Treeview Icon Hook loaded")
         self.appearance_mode = str(load_settings().get("appearance", "Follow Windows"))
         self.checked_packages = set()
         super().__init__()
@@ -4541,6 +4542,14 @@ class Cleaner(ctk.CTk):
         # The table render is the guaranteed point where triage results exist.
         # Queue the icon pipeline from the Tk/UI thread instead of depending on
         # resolver or scan-worker callbacks.
+        self.after_idle(self._ensure_icon_pipeline_after_view)
+
+        # v1.2.9: hook the actual Treeview population path.
+        resolver_log(
+            "ICON TREEVIEW HOOK method=apply_view serial={} apps={}".format(
+                self.current_serial(), len(self.all_apps or [])
+            )
+        )
         self.after_idle(self._ensure_icon_pipeline_after_view)
 
     def toggle_cross_pc_test_mode(self):
