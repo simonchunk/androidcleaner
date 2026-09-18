@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.10"
+APP_VERSION = "1.2.11"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2733,7 +2733,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.10 Scan UI Trace loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.11 Serial Icon Fix loaded")
         self.appearance_mode = str(load_settings().get("appearance", "Follow Windows"))
         self.checked_packages = set()
         super().__init__()
@@ -3425,7 +3425,6 @@ class Cleaner(ctk.CTk):
         self._apply_tree_palette()
 
     def set_view(self, mode):
-        resolver_log("TRACE SET_VIEW ENTER mode={!r}".format(mode))
         self.view_var.set(mode)
         if hasattr(self, "view_label_var"):
             self.view_label_var.set(mode)
@@ -3893,47 +3892,7 @@ class Cleaner(ctk.CTk):
             return text.split("  [", 1)[0]
         return None
 
-    def _trace_apply_view_after_scan(self):
-        resolver_log(
-            "TRACE UI CALLBACK apply_view ENTER serial={} apps={}".format(
-                self.current_serial(), len(self.all_apps or [])
-            )
-        )
-        try:
-            self.apply_view()
-            resolver_log(
-                "TRACE UI CALLBACK apply_view EXIT rows={}".format(
-                    len(getattr(self, "rows", {}) or {})
-                )
-            )
-        except Exception as exc:
-            resolver_log("TRACE UI CALLBACK apply_view ERROR {!r}".format(exc))
-            raise
-
-    def _trace_scan_ui_off_after_scan(self):
-        resolver_log("TRACE UI CALLBACK scan_ui(False) ENTER")
-        try:
-            self._scan_ui(False)
-            resolver_log("TRACE UI CALLBACK scan_ui(False) EXIT")
-        except Exception as exc:
-            resolver_log("TRACE UI CALLBACK scan_ui(False) ERROR {!r}".format(exc))
-            raise
-
-    def _trace_icon_after_scan(self):
-        resolver_log(
-            "TRACE UI CALLBACK icon pipeline ENTER serial={} apps={}".format(
-                self.current_serial(), len(self.all_apps or [])
-            )
-        )
-        try:
-            self.start_background_icon_discovery()
-            resolver_log("TRACE UI CALLBACK icon pipeline EXIT")
-        except Exception as exc:
-            resolver_log("TRACE UI CALLBACK icon pipeline ERROR {!r}".format(exc))
-            raise
-
     def scan(self):
-        resolver_log("TRACE SCAN ENTER")
         self._scan_ui(True, "Reading installed apps and device diagnostics…")
         serial = self.serial()
         if not serial:
@@ -4078,30 +4037,17 @@ class Cleaner(ctk.CTk):
                     self.after(0, lambda:self._scan_ui(False))
                     return
 
-                resolver_log(
-                    "TRACE SCAN RESULTS READY serial={} rows={} cleanup={} thread=worker".format(
-                        serial,
-                        len(rows),
-                        sum(1 for x in rows if x.get("cleanup_candidate", False))
-                    )
-                )
                 knowledge_record_scan(rows, man, model, ver)
                 self.all_apps = rows
                 self.checked_packages.intersection_update({a.get("package") for a in rows})
                 self.sort_internal()
-
-                resolver_log("TRACE SCHEDULE update_baseline_label after(0)")
                 self.after(0, self.update_baseline_label)
-
-                resolver_log("TRACE SCHEDULE apply_view wrapper after(0)")
-                self.after(0, self._trace_apply_view_after_scan)
-
-                resolver_log("TRACE SCHEDULE icon wrapper after(50)")
-                self.after(50, self._trace_icon_after_scan)
-
-                resolver_log("TRACE SCHEDULE scan_ui(False) wrapper after(0)")
-                self.after(0, self._trace_scan_ui_off_after_scan)
-                resolver_log("TRACE SCHEDULE COMPLETE")
+                self.after(0, self.apply_view)
+                # Icon discovery is an independent post-scan pipeline. Do not rely
+                # on name resolution/retriage to start it: a fully cached scan may
+                # have no resolver work at all.
+                self.after(50, self.start_background_icon_discovery)
+                self.after(0, lambda:self._scan_ui(False))
                 if self._open_repair_outcome_after_scan and self.pending_repair_apps:
                     self._open_repair_outcome_after_scan = False
                     self.after(250, self.record_repair_outcome)
@@ -4135,7 +4081,6 @@ class Cleaner(ctk.CTk):
                     self.status(f"Scan complete: {len(rows)} apps • 0 worth checking")
 
             except Exception as e:
-                resolver_log("TRACE SCAN WORKER ERROR {!r}".format(e))
                 self.after(0, lambda:self._scan_ui(False))
                 self.after(
                     0, lambda: messagebox.showerror("Scan failed", str(e))
@@ -4157,7 +4102,6 @@ class Cleaner(ctk.CTk):
             )
 
     def retriage(self):
-        resolver_log("TRACE RETRIAGE ENTER")
         if not self.all_apps:
             return
 
@@ -4307,7 +4251,7 @@ class Cleaner(ctk.CTk):
             return ""
 
     def _icon_candidate_signature(self):
-        serial = self.current_serial()
+        serial = self.serial()
         if not serial or not self.all_apps:
             return None
         candidates = [
@@ -4342,7 +4286,8 @@ class Cleaner(ctk.CTk):
 
     def start_background_icon_discovery(self):
         """Resolve icons only for apps the technician is being asked to inspect."""
-        serial = self.current_serial()
+        serial = self.serial()
+        resolver_log("ICON SERIAL ACCESSOR OK serial={!r}".format(serial))
         if not serial or not self.all_apps:
             resolver_log("ICON PIPELINE SKIP: no current serial or no scanned apps")
             return
@@ -4389,7 +4334,7 @@ class Cleaner(ctk.CTk):
             completed_normally = False
             try:
                 for app in work:
-                    if token != getattr(self, "_icon_generation", None) or serial != self.current_serial():
+                    if token != getattr(self, "_icon_generation", None) or serial != self.serial():
                         resolver_log(
                             f"ICON PIPELINE CANCEL serial={serial} generation={token}: "
                             "device/generation changed"
@@ -4445,11 +4390,6 @@ class Cleaner(ctk.CTk):
         return t in ("SYSTEM", "OEM / SYSTEM", "SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM")
 
     def apply_view(self):
-        resolver_log(
-            "TRACE APPLY_VIEW ENTER mode={!r} serial={} apps={}".format(
-                self.view_var.get(), self.current_serial(), len(self.all_apps or [])
-            )
-        )
         mode = self.view_var.get()
         if hasattr(self, "view_label_var"):
             self.view_label_var.set(mode)
@@ -4608,7 +4548,7 @@ class Cleaner(ctk.CTk):
         # v1.2.9: hook the actual Treeview population path.
         resolver_log(
             "ICON TREEVIEW HOOK method=apply_view serial={} apps={}".format(
-                self.current_serial(), len(self.all_apps or [])
+                self.serial(), len(self.all_apps or [])
             )
         )
         self.after_idle(self._ensure_icon_pipeline_after_view)
