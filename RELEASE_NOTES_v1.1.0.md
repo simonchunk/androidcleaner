@@ -42,3 +42,15 @@
 - Adds an always-visible `Appearance` menu to the main header.
 - Appearance is available in normal Staff Mode and is not Admin-gated.
 - Light / Dark / Follow Windows remain persisted per workstation.
+
+## Commercial UI local test
+- Rebuilt the main screen to match the approved dark commercial mock-up:
+  branded header, connected-device card, large navigation bar, two-column
+  findings/assessment workspace, modern dark palette, status footer and
+  contextual Remove/Mark Safe actions.
+- Findings table now prioritises App / Risk / Type / Installed via / First installed.
+- App Assessment is a permanent right-hand diagnostic card.
+- Icon discovery is restricted to CRITICAL / HIGH / CHECK apps only.
+- Protected system/OEM apps remain visible but cannot be checkbox-selected.
+- Scanner, SQLite knowledge, repair intelligence and Shared Knowledge logic are retained.
+- Local test only; do not publish as a GitHub Release.

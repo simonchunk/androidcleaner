@@ -2877,46 +2877,14 @@ class Cleaner(tk.Tk):
         return "Dark" if self._windows_dark_mode() else "Light"
 
     def apply_theme(self):
-        dark = self.effective_theme() == "Dark"
-        bg = "#202124" if dark else "#f0f0f0"
-        panel = "#292a2d" if dark else "#ffffff"
-        fg = "#e8eaed" if dark else "#111111"
-        muted = "#9aa0a6" if dark else "#777777"
-        select = "#3c4043" if dark else "#cfe8ff"
-
-        try:
-            self.configure(bg=bg)
-        except Exception:
-            pass
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-        style.configure(".", background=bg, foreground=fg)
-        style.configure("TFrame", background=bg)
-        style.configure("TLabel", background=bg, foreground=fg)
-        style.configure("TLabelframe", background=bg, foreground=fg)
-        style.configure("TLabelframe.Label", background=bg, foreground=fg)
-        style.configure("TButton", background=bg, foreground=fg)
-        style.configure("TCheckbutton", background=bg, foreground=fg)
-        style.configure("TRadiobutton", background=bg, foreground=fg)
-        style.configure("TCombobox", fieldbackground=panel, background=bg, foreground=fg)
-        style.configure("Treeview", background=panel, fieldbackground=panel, foreground=fg, rowheight=40)
-        style.map("Treeview", background=[("selected", select)], foreground=[("selected", fg)])
-        style.configure("Treeview.Heading", background=bg, foreground=fg)
-
-        # Risk colours remain semantically distinct in both modes.
-        if hasattr(self, "tree"):
-            if dark:
-                self.tree.tag_configure("critical", background="#5a2528", foreground="#ffffff")
-                self.tree.tag_configure("high", background="#5a4525", foreground="#ffffff")
-                self.tree.tag_configure("check", background="#4d4823", foreground="#ffffff")
-                self.tree.tag_configure("protected", background="#252629", foreground="#777b80")
-                self.tree.tag_configure("baseline", foreground=muted)
-            else:
-                self.tree.tag_configure("protected", foreground="#8a8a8a")
-                self.tree.tag_configure("baseline", foreground="#777777")
+        # v1.1 commercial shell is designed dark-first. The toggle is retained
+        # for staff preference, while the scanner and data views remain intact.
+        if not hasattr(self, "ui"):
+            return
+        if hasattr(self, "theme_button"):
+            self.theme_button.configure(
+                text=("☾  Dark" if self.effective_theme() == "Dark" else "☀  Light")
+            )
 
     def set_appearance(self, mode):
         if mode not in ("Light", "Dark", "Follow Windows"):
@@ -2930,153 +2898,249 @@ class Cleaner(tk.Tk):
             resolver_log(f"Appearance save failed: {exc!r}")
         self.apply_theme()
 
+    def _quick_theme_toggle(self):
+        # Commercial UI defaults to dark; this keeps a simple staff-facing toggle.
+        target = "Light" if self.effective_theme() == "Dark" else "Dark"
+        self.set_appearance(target)
+        if hasattr(self, "theme_button"):
+            self.theme_button.configure(text=("☾  Dark" if target == "Dark" else "☀  Light"))
+
     def build(self):
-        # v0.11: workshop-first interface. The scan engine is unchanged; the
-        # everyday screen now shows only what a technician needs to make a decision.
+        """Commercial workshop dashboard. Scanner/database logic is unchanged."""
+        # Palette mirrors the approved v1.1 visual mock-up.
+        self.ui = {
+            "bg": "#071522", "header": "#0b1d2d", "panel": "#0c1c2b",
+            "panel2": "#102438", "line": "#20384d", "fg": "#f4f7fb",
+            "muted": "#9fb0c2", "blue": "#2188ff", "blue2": "#1268c9",
+            "red": "#d92d3f", "orange": "#ff9b38", "green": "#24d58a",
+            "select": "#123d6b", "critical_bg": "#281923", "high_bg": "#241e18",
+        }
+        C = self.ui
+        self.configure(bg=C["bg"])
+
         style = ttk.Style(self)
-        style.configure("Header.TLabel", font=("Segoe UI Semibold", 18))
-        style.configure("Sub.TLabel", font=("Segoe UI", 10), foreground="#555555")
-        style.configure("Device.TLabel", font=("Segoe UI Semibold", 11))
-        style.configure("Primary.TButton", font=("Segoe UI Semibold", 10), padding=(12, 7))
-        style.configure("Action.TButton", padding=(10, 6))
-        style.configure("Card.TFrame", relief="solid", borderwidth=1)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure(".", font=("Segoe UI", 10), background=C["bg"], foreground=C["fg"])
+        style.configure("App.TFrame", background=C["bg"])
+        style.configure("Header.TFrame", background=C["header"])
+        style.configure("Panel.TFrame", background=C["panel"])
+        style.configure("Panel2.TFrame", background=C["panel2"])
+        style.configure("Title.TLabel", background=C["header"], foreground=C["fg"],
+                        font=("Segoe UI Semibold", 22))
+        style.configure("Brand.TLabel", background=C["header"], foreground="#55a8ff",
+                        font=("Segoe UI Semibold", 14))
+        style.configure("Muted.TLabel", background=C["bg"], foreground=C["muted"])
+        style.configure("HeaderMuted.TLabel", background=C["header"], foreground=C["muted"])
+        style.configure("Panel.TLabel", background=C["panel"], foreground=C["fg"])
+        style.configure("PanelMuted.TLabel", background=C["panel"], foreground=C["muted"])
+        style.configure("PanelTitle.TLabel", background=C["panel"], foreground=C["fg"],
+                        font=("Segoe UI Semibold", 15))
+        style.configure("Nav.TButton", padding=(18, 12), background=C["panel2"], foreground=C["fg"],
+                        borderwidth=1, relief="flat")
+        style.map("Nav.TButton", background=[("active", "#17344f")])
+        style.configure("Primary.TButton", padding=(14, 10), background=C["blue"], foreground="white",
+                        borderwidth=0, font=("Segoe UI Semibold", 10))
+        style.map("Primary.TButton", background=[("active", C["blue2"])])
+        style.configure("Danger.TButton", padding=(14, 11), background=C["red"], foreground="white",
+                        borderwidth=0, font=("Segoe UI Semibold", 10))
+        style.configure("Safe.TButton", padding=(14, 11), background="#103b32", foreground="#61e7b1",
+                        borderwidth=1, font=("Segoe UI Semibold", 10))
+        style.configure("Ghost.TButton", padding=(12, 9), background=C["panel"], foreground=C["fg"],
+                        borderwidth=1)
+        style.configure("Modern.TCombobox", fieldbackground=C["panel2"], background=C["panel2"],
+                        foreground=C["fg"], arrowcolor=C["fg"], padding=7)
+        style.configure("Modern.Treeview", background=C["panel"], fieldbackground=C["panel"],
+                        foreground=C["fg"], rowheight=72, borderwidth=0, relief="flat",
+                        font=("Segoe UI", 10))
+        style.map("Modern.Treeview", background=[("selected", C["select"])],
+                  foreground=[("selected", "white")])
+        style.configure("Modern.Treeview.Heading", background=C["panel"], foreground="#c8d4df",
+                        font=("Segoe UI Semibold", 10), padding=(8, 10), relief="flat")
+        style.map("Modern.Treeview.Heading", background=[("active", C["panel2"])])
 
-        # Header / connection area.
-        header = ttk.Frame(self, padding=(14, 12, 14, 8))
+        # Header
+        header = ttk.Frame(self, style="Header.TFrame", padding=(26, 17))
         header.pack(fill="x")
-        left = ttk.Frame(header)
-        left.pack(side="left", fill="x", expand=True)
-        ttk.Label(left, text="Android Cleaner", style="Header.TLabel").pack(anchor="w")
-        ttk.Label(left, text="Connect a customer phone — scanning starts automatically.", style="Sub.TLabel").pack(anchor="w", pady=(1, 0))
-        ttk.Button(header, text="How to Connect", command=self.show_how_to_connect, style="Primary.TButton").pack(side="right", padx=(8, 0))
+        brand = ttk.Frame(header, style="Header.TFrame")
+        brand.pack(side="left")
+        ttk.Label(brand, text="▯", style="Brand.TLabel", font=("Segoe UI", 28)).pack(side="left", padx=(0, 10))
+        ttk.Label(brand, text="The iPhone Guy", style="Brand.TLabel").pack(side="left")
+        ttk.Separator(header, orient="vertical").pack(side="left", fill="y", padx=18)
 
-        appearance_btn = ttk.Menubutton(header, text="Appearance ▾")
-        appearance_menu = tk.Menu(appearance_btn, tearoff=False)
-        appearance_menu.add_command(label="Light", command=lambda:self.set_appearance("Light"))
-        appearance_menu.add_command(label="Dark", command=lambda:self.set_appearance("Dark"))
-        appearance_menu.add_command(label="Follow Windows", command=lambda:self.set_appearance("Follow Windows"))
-        appearance_btn["menu"] = appearance_menu
-        appearance_btn.pack(side="right", padx=(8, 0))
+        titlebox = ttk.Frame(header, style="Header.TFrame")
+        titlebox.pack(side="left")
+        ttk.Label(titlebox, text="Android Cleaner", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(titlebox, text="Find and remove problematic Android apps",
+                  style="HeaderMuted.TLabel").pack(anchor="w")
 
-        advanced_btn = ttk.Menubutton(header, text="Advanced ▾")
-        self.advanced_menu = tk.Menu(advanced_btn, tearoff=False)
-        advanced_btn["menu"] = self.advanced_menu
-        advanced_btn.pack(side="right")
+        # Right header actions
+        ttk.Button(header, text="⚙  Advanced", command=lambda:self.advanced_btn.event_generate("<Button-1>"),
+                   style="Ghost.TButton").pack(side="right", padx=(8,0))
+        ttk.Button(header, text="?  Help", command=self.show_how_to_connect,
+                   style="Ghost.TButton").pack(side="right", padx=8)
+
+        self.theme_button = ttk.Button(header, text="☾  Dark", command=self._quick_theme_toggle,
+                                       style="Ghost.TButton")
+        self.theme_button.pack(side="right", padx=8)
+
+        self.advanced_btn = ttk.Menubutton(header, text="Advanced", style="Ghost.TButton")
+        self.advanced_menu = tk.Menu(self.advanced_btn, tearoff=False)
+        self.advanced_btn["menu"] = self.advanced_menu
+        # Kept off-screen visually; the polished header button opens this menu.
+        self.advanced_btn.place(x=-1000, y=-1000)
         self.rebuild_advanced_menu()
 
-        device_card = ttk.Frame(self, padding=(14, 9), style="Card.TFrame")
-        device_card.pack(fill="x", padx=14, pady=(0, 8))
+        # Device summary in header.
+        device = ttk.Frame(header, style="Panel2.TFrame", padding=(18, 9))
+        device.pack(side="right", padx=(20, 18))
         self.device_var = tk.StringVar(value="No device")
-        self.device_combo = ttk.Combobox(device_card, textvariable=self.device_var, state="readonly", width=30)
-        self.device_combo.pack(side="left")
+        self.device_combo = ttk.Combobox(device, textvariable=self.device_var, state="readonly",
+                                         width=24, style="Modern.TCombobox")
+        self.device_combo.pack(anchor="w")
         self.device_combo.bind("<<ComboboxSelected>>", self._device_selected)
-        self.info_var = tk.StringVar(value="Connect an Android phone with USB debugging enabled.")
-        ttk.Label(device_card, textvariable=self.info_var, style="Device.TLabel").pack(side="left", padx=(14, 10))
+        self.info_var = tk.StringVar(value="Connect an Android phone")
+        ttk.Label(device, textvariable=self.info_var, style="PanelMuted.TLabel",
+                  wraplength=370).pack(anchor="w", pady=(3,0))
         self.status_var = tk.StringVar(value="Waiting for phone")
-        ttk.Label(device_card, textvariable=self.status_var, style="Sub.TLabel").pack(side="right")
+        ttk.Label(device, textvariable=self.status_var, foreground=C["green"],
+                  background=C["panel2"]).pack(anchor="w")
 
-        # Review controls.
-        review = ttk.Frame(self, padding=(14, 3, 14, 7))
-        review.pack(fill="x")
-        ttk.Label(review, text="Review findings", font=("Segoe UI Semibold", 12)).pack(side="left")
+        # Navigation bar
+        nav = ttk.Frame(self, style="Panel.TFrame", padding=(22, 12))
+        nav.pack(fill="x", padx=22, pady=(12, 0))
         self.view_label_var = tk.StringVar(value="Cleanup")
-        ttk.Button(review, text="Cleanup", command=lambda:self.set_view("Cleanup")).pack(side="left", padx=(8, 3))
-        ttk.Button(review, text="Review", command=lambda:self.set_view("Review")).pack(side="left", padx=3)
-        ttk.Button(review, text="Games", command=lambda:self.set_view("Games")).pack(side="left", padx=3)
-        ttk.Button(review, text="Unused Apps", command=lambda:self.set_view("Unused Apps")).pack(side="left", padx=3)
-        ttk.Button(review, text="All Apps", command=lambda:self.set_view("All Apps")).pack(side="left", padx=(3, 16))
-        ttk.Label(review, text="Problem started:").pack(side="left")
-        onset = ttk.Combobox(review, textvariable=self.onset_var, state="readonly", values=ONSET_OPTIONS, width=15)
-        onset.pack(side="left", padx=(5, 12))
-        onset.bind("<<ComboboxSelected>>", lambda e: self.retriage())
-        ttk.Button(review, text="Select All", command=self.check_all_visible).pack(side="right", padx=(5, 0))
-        ttk.Button(review, text="Clear", command=self.clear_all_checked).pack(side="right")
-        ttk.Label(review, textvariable=self.count_var, style="Sub.TLabel").pack(side="right", padx=(0, 12))
+        for label in ("Cleanup", "Review", "Games", "Unused Apps", "All Apps"):
+            ttk.Button(nav, text=label, command=lambda m=label:self.set_view(m),
+                       style="Nav.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(nav, text="↻  Rescan", command=self.scan, style="Ghost.TButton").pack(side="right")
+        self.onset_var = getattr(self, "onset_var", tk.StringVar(value="Unknown"))
+        onset = ttk.Combobox(nav, textvariable=self.onset_var, state="readonly",
+                             values=ONSET_OPTIONS, width=15, style="Modern.TCombobox")
+        onset.pack(side="right", padx=(8, 12))
+        onset.bind("<<ComboboxSelected>>", lambda e:self.retriage())
+        ttk.Label(nav, text="Problem started:", style="Panel.TLabel").pack(side="right")
 
+        # Context strip
+        context = ttk.Frame(self, style="App.TFrame", padding=(28, 10, 28, 8))
+        context.pack(fill="x")
         self.baseline_var = tk.StringVar(value="")
-        ttk.Label(self, textvariable=self.baseline_var, padding=(14, 0, 14, 3), style="Sub.TLabel").pack(fill="x")
+        ttk.Label(context, textvariable=self.baseline_var, style="Muted.TLabel").pack(anchor="w")
         self.popup_summary_var = tk.StringVar(value="Secondary cleanup: waiting for scan")
-        ttk.Label(self, textvariable=self.popup_summary_var, padding=(14, 0, 14, 7), style="Sub.TLabel").pack(fill="x")
+        ttk.Label(context, textvariable=self.popup_summary_var, style="Muted.TLabel").pack(anchor="w", pady=(5,0))
+        self.count_var = getattr(self, "count_var", tk.StringVar(value="Showing 0 apps • 0 selected"))
 
-        cols = (
-            "checked", "priority", "status", "app", "identity", "app_type", "reputation",
-            "package", "installer", "version", "installed", "updated", "special", "online", "popup", "reason"
-        )
-        table = ttk.Frame(self)
-        table.pack(fill="both", expand=True, padx=14)
-        self.tree = ttk.Treeview(table, columns=cols, show="tree headings", selectmode="extended")
+        # Main split layout
+        main = ttk.Frame(self, style="App.TFrame", padding=(22, 0, 22, 8))
+        main.pack(fill="both", expand=True)
+        main.columnconfigure(0, weight=2)
+        main.columnconfigure(1, weight=1, minsize=440)
+        main.rowconfigure(0, weight=1)
+
+        # Left findings panel
+        left = ttk.Frame(main, style="Panel.TFrame", padding=0)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left_top = ttk.Frame(left, style="Panel.TFrame", padding=(14, 9))
+        left_top.pack(fill="x")
+        ttk.Label(left_top, textvariable=self.count_var, style="PanelMuted.TLabel").pack(side="right")
+        ttk.Button(left_top, text="Clear Selection", command=self.clear_all_checked,
+                   style="Ghost.TButton").pack(side="right", padx=(0,10))
+
+        cols = ("checked","app","priority","app_type","installer","installed","package",
+                "reputation","status","identity","version","updated","special","online","popup","reason")
+        table = ttk.Frame(left, style="Panel.TFrame")
+        table.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(table, columns=cols, show="tree headings",
+                                 selectmode="extended", style="Modern.Treeview")
         heads = {
-            "checked":"✓", "priority":"Review", "status":"Decision", "app":"App",
-            "identity":"Name", "app_type":"Type", "reputation":"Reputation", "package":"Package",
-            "installer":"Installed via", "version":"Version", "installed":"First installed",
-            "updated":"Last updated", "special":"Special access", "online":"Online reputation",
-            "popup":"Popup ads", "reason":"Why it is shown"
+            "checked":"", "app":"App", "priority":"Risk", "app_type":"Type",
+            "installer":"Installed via", "installed":"First installed", "package":"Package",
+            "reputation":"Reputation", "status":"Decision", "identity":"Name",
+            "version":"Version", "updated":"Last updated", "special":"Special access",
+            "online":"Online reputation", "popup":"Popup ads", "reason":"Why it is shown"
         }
-        widths = {
-            "checked":42,"priority":78,"status":95,"app":330,"identity":80,"app_type":115,
-            "reputation":115,"package":250,"installer":145,"version":90,"installed":145,
-            "updated":145,"special":180,"online":175,"popup":125,"reason":260
-        }
+        widths = {"checked":48,"app":310,"priority":105,"app_type":120,"installer":155,
+                  "installed":165,"package":260,"reputation":130,"status":100,"identity":80,
+                  "version":90,"updated":145,"special":180,"online":175,"popup":120,"reason":280}
         for c in cols:
             self.tree.heading(c, text=heads[c], command=lambda col=c:self.sort_by(col, False))
             self.tree.column(c, width=widths[c], anchor="w")
         self.tree.heading("#0", text="")
-        self.tree.column("#0", width=46, minwidth=46, stretch=False, anchor="center")
-        self.tree.column("checked", width=42, minwidth=42, stretch=False, anchor="center")
-        # Core screen deliberately hides implementation-heavy fields. They remain
-        # in the Treeview so existing actions/sorting/database logic stays intact.
-        self.tree["displaycolumns"] = ("checked","priority","reputation","app","app_type","popup","installer","installed")
-
+        self.tree.column("#0", width=58, minwidth=58, stretch=False, anchor="center")
+        self.tree.column("checked", width=48, minwidth=48, stretch=False, anchor="center")
+        self.tree["displaycolumns"] = ("checked","app","priority","app_type","installer","installed")
         yscroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
-        xscroll = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        yscroll.grid(row=0, column=1, sticky="ns")
-        xscroll.grid(row=1, column=0, sticky="ew")
-        table.rowconfigure(0, weight=1); table.columnconfigure(0, weight=1)
+        self.tree.configure(yscrollcommand=yscroll.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        yscroll.pack(side="right", fill="y")
         self.tree.bind("<Button-1>", self.on_tree_click, add="+")
         self.tree.bind("<<TreeviewSelect>>", lambda e:self.update_selection_summary())
-        self.tree.tag_configure("critical", background="#ffd9d9")
-        self.tree.tag_configure("high", background="#ffe7c2")
-        self.tree.tag_configure("check", background="#fff7c7")
-        self.tree.tag_configure("baseline", foreground="#777777")
-        self.tree.tag_configure("protected", foreground="#8a8a8a")
+        self.tree.tag_configure("critical", background=C["critical_bg"], foreground="#ffffff")
+        self.tree.tag_configure("high", background=C["high_bg"], foreground="#ffffff")
+        self.tree.tag_configure("check", background="#202117", foreground="#ffffff")
+        self.tree.tag_configure("baseline", foreground="#708396")
+        self.tree.tag_configure("protected", background="#0a1722", foreground="#627487")
         self.icon_images = {}
 
-        # Selected-app details live in their own bounded row.  Keeping this
-        # separate from the action buttons prevents long diagnostic text from
-        # pushing buttons off-screen or changing their size.
-        footer = ttk.Frame(self, padding=(14, 6, 14, 10))
-        footer.pack(fill="x")
+        # Right assessment card
+        right = ttk.Frame(main, style="Panel.TFrame", padding=(18, 16))
+        right.grid(row=0, column=1, sticky="nsew")
         self.selection_var = tk.StringVar(value="Select an app to review it.")
         self.intel_title_var = tk.StringVar(value="")
         self.intel_history_var = tk.StringVar(value="")
         self.intel_reason_var = tk.StringVar(value="")
-        detail_box = ttk.LabelFrame(footer, text="App assessment", padding=(10, 6))
-        detail_box.pack(fill="x", pady=(0, 6))
-        self.selection_label = ttk.Label(
-            detail_box, textvariable=self.selection_var, style="Sub.TLabel",
-            anchor="w", justify="left"
-        )
-        self.selection_label.pack(fill="x")
-        self.intel_title_label = ttk.Label(detail_box, textvariable=self.intel_title_var, anchor="w", justify="left")
-        self.intel_title_label.pack(fill="x", pady=(2,0))
-        self.intel_history_label = ttk.Label(detail_box, textvariable=self.intel_history_var, anchor="w", justify="left")
-        self.intel_history_label.pack(fill="x", pady=(2,0))
-        self.intel_reason_label = ttk.Label(detail_box, textvariable=self.intel_reason_var, style="Sub.TLabel", anchor="w", justify="left")
-        self.intel_reason_label.pack(fill="x", pady=(2,0))
 
-        actions = ttk.Frame(footer)
-        actions.pack(fill="x")
-        button_specs = (
-            ("Remove Selected", self.uninstall),
-            ("Mark Safe", lambda:self.classify("Safe")),
-        )
-        for i, (text, command) in enumerate(button_specs):
-            actions.columnconfigure(i, weight=1, uniform="footer_actions")
-            ttk.Button(actions, text=text, command=command, style="Action.TButton").grid(
-                row=0, column=i, sticky="ew", padx=(0 if i == 0 else 3, 0)
-            )
+        ttk.Label(right, text="App assessment", style="PanelMuted.TLabel").pack(anchor="w")
+        self.selection_label = ttk.Label(right, textvariable=self.selection_var,
+                                         style="PanelTitle.TLabel", wraplength=430, justify="left")
+        self.selection_label.pack(fill="x", anchor="w", pady=(8, 10))
+        ttk.Separator(right).pack(fill="x", pady=(0, 12))
+
+        ttk.Label(right, text="DETAILS", style="PanelMuted.TLabel").pack(anchor="w")
+        self.intel_history_label = ttk.Label(right, textvariable=self.intel_history_var,
+                                             style="Panel.TLabel", wraplength=430, justify="left")
+        self.intel_history_label.pack(fill="x", anchor="w", pady=(7, 14))
+
+        riskbox = tk.Frame(right, bg="#2a1720", highlightbackground="#8d2c3b",
+                           highlightthickness=1, padx=14, pady=12)
+        riskbox.pack(fill="x", pady=(0, 12))
+        tk.Label(riskbox, text="⚠  Why we're showing this", bg="#2a1720", fg="#ffffff",
+                 font=("Segoe UI Semibold", 11)).pack(anchor="w")
+        self.intel_reason_label = tk.Label(riskbox, textvariable=self.intel_reason_var,
+                                           bg="#2a1720", fg="#e6cbd0", wraplength=400,
+                                           justify="left", anchor="w")
+        self.intel_reason_label.pack(fill="x", pady=(7,0))
+
+        intelbox = tk.Frame(right, bg=C["panel2"], highlightbackground=C["line"],
+                            highlightthickness=1, padx=14, pady=12)
+        intelbox.pack(fill="x", pady=(0, 12))
+        tk.Label(intelbox, text="🔧  Repair intelligence", bg=C["panel2"], fg="#ffffff",
+                 font=("Segoe UI Semibold", 11)).pack(anchor="w")
+        self.intel_title_label = tk.Label(intelbox, textvariable=self.intel_title_var,
+                                          bg=C["panel2"], fg="#b9c8d6", wraplength=400,
+                                          justify="left", anchor="w")
+        self.intel_title_label.pack(fill="x", pady=(7,0))
+
+        actions = ttk.Frame(right, style="Panel.TFrame")
+        actions.pack(fill="x", side="bottom")
+        actions.columnconfigure(0, weight=1); actions.columnconfigure(1, weight=1)
+        ttk.Button(actions, text="🗑  Remove App", command=self.uninstall,
+                   style="Danger.TButton").grid(row=0,column=0,sticky="ew",padx=(0,6))
+        ttk.Button(actions, text="🛡  Mark Safe", command=lambda:self.classify("Safe"),
+                   style="Safe.TButton").grid(row=0,column=1,sticky="ew",padx=(6,0))
+
+        # Bottom status bar
+        statusbar = ttk.Frame(self, style="Header.TFrame", padding=(24, 7))
+        statusbar.pack(fill="x")
+        self.bottom_status_var = tk.StringVar(value="Ready")
+        ttk.Label(statusbar, textvariable=self.bottom_status_var,
+                  style="HeaderMuted.TLabel").pack(side="left")
+        ttk.Label(statusbar, text="Icon cache enabled", style="HeaderMuted.TLabel").pack(side="right")
+        self.icon_status_var = tk.StringVar(value="Icons: waiting")
+        ttk.Label(statusbar, textvariable=self.icon_status_var,
+                  style="HeaderMuted.TLabel").pack(side="right", padx=(0,18))
 
     def set_view(self, mode):
         self.view_var.set(mode)
@@ -3105,7 +3169,7 @@ class Cleaner(tk.Tk):
         name=a.get("app_name") or a.get("package","")
         rep=a.get("reputation") or "UNKNOWN"
         priority=a.get("priority") or "INFO"
-        self.selection_var.set(f"{name}   •   {priority}   •   Reputation: {rep}")
+        self.selection_var.set(f"{name}\n{priority}   •   {rep}")
 
         stats=knowledge_stats(a.get("package")) or {}
         evidence=repair_evidence_stats(a.get("package"))
@@ -3132,7 +3196,7 @@ class Cleaner(tk.Tk):
             history.append(f"SHARED: {net.get('observations',0)} obs / {net.get('removals',0)} removals / {net.get('repair_yes',0)} fixed")
             if int(net.get('safe_votes') or 0): history.append(f"Shared safe marks {net.get('safe_votes')}")
             if int(net.get('malware_votes') or 0): history.append(f"Shared malware marks {net.get('malware_votes')}")
-        self.intel_title_var.set("Repair intelligence: " + "   •   ".join(history))
+        self.intel_title_var.set("\n".join("✓  "+x for x in history) if history else "✓  No previous repair evidence found")
 
         metadata=[]
         if a.get("version_name"):
@@ -3143,7 +3207,7 @@ class Cleaner(tk.Tk):
             metadata.append("Installed "+str(a.get("first_install")))
         if a.get("last_update"):
             metadata.append("Updated "+str(a.get("last_update")))
-        self.intel_history_var.set("   •   ".join(metadata))
+        self.intel_history_var.set("\n".join("•  "+x for x in metadata))
 
         details=[]
         if a.get("active_special"):
@@ -3155,7 +3219,7 @@ class Cleaner(tk.Tk):
             details.append("Why flagged: "+" • ".join(reasons[:4])+(" • …" if len(reasons)>4 else ""))
         if self._is_protected_app(a):
             details.insert(0, "🔒 PROTECTED SYSTEM APP — removal disabled")
-        self.intel_reason_var.set("   •   ".join(details))
+        self.intel_reason_var.set("\n".join("•  "+x for x in details) if details else "No additional risk details.")
 
     def show_how_to_connect(self):
         win = tk.Toplevel(self)
@@ -3788,6 +3852,7 @@ class Cleaner(tk.Tk):
 
         self.sort_internal()
         self.apply_view()
+        self.start_background_icon_discovery()
 
         # A Problem-started change can introduce new Cleanup candidates. Resolve
         # whatever is now visible instead of leaving newly-added rows as package IDs.
@@ -3839,6 +3904,9 @@ class Cleaner(tk.Tk):
         self.tree.focus(row)
         if self.tree.identify_column(event.x) == "#1":
             pkg = self.tree.set(row, "package")
+            app = self.rows.get(row)
+            if app and self._is_protected_app(app):
+                return
             if pkg in self.checked_packages:
                 self.checked_packages.remove(pkg)
             else:
@@ -3848,7 +3916,7 @@ class Cleaner(tk.Tk):
         self.after_idle(self.update_selection_summary)
 
     def check_all_visible(self):
-        self.checked_packages.update(self._visible_packages())
+        self.checked_packages.update(a["package"] for a in self.rows.values() if not self._is_protected_app(a))
         self.refresh_checkbox_cells()
 
     def clear_all_checked(self):
@@ -3882,40 +3950,36 @@ class Cleaner(tk.Tk):
             return ""
 
     def start_background_icon_discovery(self):
-        """Progressively populate icons after the normal scan has rendered."""
+        """Resolve icons only for apps the technician is being asked to inspect."""
         serial = self.current_serial()
-        if not serial or not self.apps:
+        if not serial or not self.all_apps:
             return
         token = getattr(self, "_icon_generation", 0) + 1
         self._icon_generation = token
-
-        # User apps first because they are the most useful visually. System/OEM
-        # apps follow afterwards and benefit from the same cache on future scans.
-        work = list(self.apps)
-        work.sort(key=lambda a: (
-            1 if str(a.get("app_type") or a.get("type") or "").upper() in
-                 ("SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM") else 0,
-            str(a.get("label") or a.get("package") or "").lower()
-        ))
+        work = [
+            a for a in self.all_apps
+            if a.get("priority") in ("CRITICAL", "HIGH", "CHECK")
+            and not self._is_protected_app(a)
+        ]
+        work.sort(key=lambda a: {"CRITICAL":0,"HIGH":1,"CHECK":2}.get(a.get("priority"),3))
+        total = len(work)
+        if hasattr(self, "icon_status_var"):
+            self.icon_status_var.set(f"Icons: 0/{total} loaded")
 
         def worker():
-            changed = 0
+            done = 0
             for app in work:
-                if token != getattr(self, "_icon_generation", None):
-                    return
-                if serial != self.current_serial():
+                if token != getattr(self, "_icon_generation", None) or serial != self.current_serial():
                     return
                 if app.get("icon_path") and Path(str(app["icon_path"])).is_file():
-                    continue
-                icon = pull_apk_icon(serial, app)
-                if icon:
-                    changed += 1
-                    # Refresh periodically rather than repainting 500+ times.
-                    if changed % 5 == 0:
-                        self.after(0, self.apply_view)
-            if token == getattr(self, "_icon_generation", None):
+                    done += 1
+                else:
+                    icon = pull_apk_icon(serial, app)
+                    if icon:
+                        done += 1
+                if hasattr(self, "icon_status_var"):
+                    self.after(0, lambda d=done,t=total:self.icon_status_var.set(f"Icons: {d}/{t} loaded"))
                 self.after(0, self.apply_view)
-
         threading.Thread(target=worker, daemon=True).start()
 
     def _is_protected_app(self, app):
@@ -4037,21 +4101,19 @@ class Cleaner(tk.Tk):
                 image=self._tree_icon_for_app(app),
                 values=(
                     "☑" if app["package"] in self.checked_packages else "☐",
-                    app["priority"],
-                    {
-                        "safe": "Safe",
-                        "unknown": "Unclassified",
-                        "suspicious": "Suspicious",
-                        "malware": "Malware",
-                    }.get(app["classification"], "Unclassified"),
                     app["app_name"],
-                    app.get("identity_state", "Pending"),
+                    app["priority"],
                     app.get("app_type", "UNKNOWN"),
-                    app.get("reputation", "UNKNOWN"),
-                    app["package"],
                     app["installer_label"],
-                    app.get("version_name", ""),
                     app.get("first_install", ""),
+                    app["package"],
+                    app.get("reputation", "UNKNOWN"),
+                    {
+                        "safe": "Safe", "unknown": "Unclassified",
+                        "suspicious": "Suspicious", "malware": "Malware",
+                    }.get(app["classification"], "Unclassified"),
+                    app.get("identity_state", "Pending"),
+                    app.get("version_name", ""),
                     app.get("last_update", ""),
                     app.get("active_special", ""),
                     app.get("online_status", "Not checked"),
