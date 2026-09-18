@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import tempfile
+import zipfile
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -19,11 +20,12 @@ import certifi
 from collections import Counter
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
+from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_NAME = "The iPhone Guy - Android Cleaner v1.0.0"
-APP_VERSION = "1.0.0"
+APP_NAME = "The iPhone Guy - Android Cleaner v1.1.0"
+APP_VERSION = "1.1.0"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
 ADMIN_PIN_ITERATIONS = 200000
@@ -32,6 +34,8 @@ BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False
 PRODUCTION_CONFIG_PATH = BASE_DIR / "production_config.json"
 DATA_DIR = Path(os.getenv("LOCALAPPDATA", BASE_DIR)) / "TheiPhoneGuyAndroidCleaner"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+ICON_DIR = DATA_DIR / "AppIcons"
+ICON_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "cleaner.db"
 REAL_DB_PATH = DB_PATH
 TEST_DB_PATH = DATA_DIR / "cross_pc_test.db"
@@ -521,6 +525,75 @@ def extract_real_label(apk_path):
 
     return ""
 
+def icon_cache_path(sha256_hex):
+    if not sha256_hex:
+        return ""
+    return str(ICON_DIR / f"{sha256_hex}.png")
+
+
+def extract_app_icon(apk_path, sha256_hex):
+    """Extract the best raster launcher icon from an APK and cache it as PNG.
+
+    Adaptive/vector-only icons are deliberately skipped rather than guessed.
+    Many modern APKs still include raster launcher assets at one or more densities.
+    """
+    if not sha256_hex:
+        return ""
+    target = Path(icon_cache_path(sha256_hex))
+    if target.is_file() and target.stat().st_size > 0:
+        return str(target)
+
+    aapt2 = find_aapt2()
+    if not aapt2:
+        return ""
+
+    try:
+        r = subprocess.run(
+            [aapt2, "dump", "badging", str(apk_path)],
+            capture_output=True, text=True, timeout=20,
+            creationflags=_flags()
+        )
+        if r.returncode != 0:
+            return ""
+        out = r.stdout or ""
+
+        candidates = []
+        for density, resource in re.findall(
+            r"^application-icon-(\d+):'([^']+)'$", out, re.MULTILINE
+        ):
+            candidates.append((int(density), resource))
+
+        # Some packages only expose the generic application icon in badging.
+        m = re.search(r"^application: .*?\bicon='([^']+)'", out, re.MULTILINE)
+        if m:
+            candidates.append((0, m.group(1)))
+
+        # Prefer the highest-density raster asset.
+        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        with zipfile.ZipFile(apk_path, "r") as zf:
+            names = set(zf.namelist())
+            for _density, resource in candidates:
+                if resource not in names:
+                    continue
+                if not resource.lower().endswith((".png", ".webp", ".jpg", ".jpeg")):
+                    continue
+                try:
+                    from io import BytesIO
+                    with Image.open(BytesIO(zf.read(resource))) as im:
+                        im = im.convert("RGBA")
+                        im.thumbnail((96, 96), Image.Resampling.LANCZOS)
+                        im.save(target, "PNG")
+                    resolver_log(f"ICON cached: {target.name} from {resource}")
+                    return str(target)
+                except Exception as exc:
+                    resolver_log(f"ICON decode failed {resource}: {exc!r}")
+    except Exception as exc:
+        resolver_log(f"ICON extraction failed: {exc!r}")
+
+    return ""
+
+
 def pull_apk_identity(serial, app):
     package = app["package"]
     resolver_log(f"IDENTITY {package}: locating APK path")
@@ -622,12 +695,14 @@ def pull_apk_identity(serial, app):
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(chunk)
 
+        sha256_hex = h.hexdigest()
         resolver_log(f"IDENTITY {package}: starting AAPT2 label extraction")
         label = extract_real_label(local)
         label = str(label or "").strip()
         resolver_log(f"IDENTITY {package}: label={label!r}")
+        extract_app_icon(local, sha256_hex)
 
-        return label, h.hexdigest(), local.stat().st_size
+        return label, sha256_hex, local.stat().st_size
 
 
 
@@ -2620,7 +2695,7 @@ class Cleaner(tk.Tk):
         )
         table = ttk.Frame(self)
         table.pack(fill="both", expand=True, padx=14)
-        self.tree = ttk.Treeview(table, columns=cols, show="headings", selectmode="extended")
+        self.tree = ttk.Treeview(table, columns=cols, show="tree headings", selectmode="extended")
         heads = {
             "checked":"✓", "priority":"Review", "status":"Decision", "app":"App",
             "identity":"Name", "app_type":"Type", "reputation":"Reputation", "package":"Package",
@@ -2636,6 +2711,8 @@ class Cleaner(tk.Tk):
         for c in cols:
             self.tree.heading(c, text=heads[c], command=lambda col=c:self.sort_by(col, False))
             self.tree.column(c, width=widths[c], anchor="w")
+        self.tree.heading("#0", text="")
+        self.tree.column("#0", width=42, minwidth=42, stretch=False, anchor="center")
         self.tree.column("checked", width=42, minwidth=42, stretch=False, anchor="center")
         # Core screen deliberately hides implementation-heavy fields. They remain
         # in the Treeview so existing actions/sorting/database logic stays intact.
@@ -2654,6 +2731,7 @@ class Cleaner(tk.Tk):
         self.tree.tag_configure("high", background="#ffe7c2")
         self.tree.tag_configure("check", background="#fff7c7")
         self.tree.tag_configure("baseline", foreground="#777777")
+        self.icon_images = {}
 
         # Selected-app details live in their own bounded row.  Keeping this
         # separate from the action buttons prevents long diagnostic text from
@@ -2746,14 +2824,26 @@ class Cleaner(tk.Tk):
             if int(net.get('malware_votes') or 0): history.append(f"Shared malware marks {net.get('malware_votes')}")
         self.intel_title_var.set("Repair intelligence: " + "   •   ".join(history))
 
+        metadata=[]
+        if a.get("version_name"):
+            metadata.append("Version "+str(a.get("version_name")))
+        if a.get("installer_label"):
+            metadata.append("Installed via "+str(a.get("installer_label")))
+        if a.get("first_install"):
+            metadata.append("Installed "+str(a.get("first_install")))
+        if a.get("last_update"):
+            metadata.append("Updated "+str(a.get("last_update")))
+        self.intel_history_var.set("   •   ".join(metadata))
+
         details=[]
+        if a.get("active_special"):
+            details.append("ACTIVE ACCESS: "+a["active_special"])
         if a.get("popup_risk") not in (None,"","NONE","SYSTEM","No signal"):
             details.append("Popup risk: "+str(a.get("popup_risk")))
-        if a.get("active_special"): details.append("Special access: "+a["active_special"])
         reasons=[x.strip() for x in (a.get("reason") or "").split("•") if x.strip()]
-        if reasons: details.append("Why flagged: "+" • ".join(reasons[:4])+(" • …" if len(reasons)>4 else ""))
-        self.intel_history_var.set("   •   ".join(details[:2]))
-        self.intel_reason_var.set(details[2] if len(details)>2 else (details[0] if len(details)==1 else ""))
+        if reasons:
+            details.append("Why flagged: "+" • ".join(reasons[:4])+(" • …" if len(reasons)>4 else ""))
+        self.intel_reason_var.set("   •   ".join(details))
 
     def show_how_to_connect(self):
         win = tk.Toplevel(self)
@@ -3211,11 +3301,13 @@ class Cleaner(tk.Tk):
                         app_name = cached_identity["app_label"]
                         app["identity_state"] = "Resolved"
                         app["sha256"] = cached_identity.get("sha256", "") or ""
+                        app["icon_path"] = icon_cache_path(app["sha256"])
                         knowledge_promote_identity(app)
                     else:
                         app_name = package_display_name(app["package"])
                         app["identity_state"] = "Pending"
                         app["sha256"] = ""
+                        app["icon_path"] = ""
 
                     app["app_name"] = app_name
                     app["hibernated"] = app["package"] in hibernated
@@ -3459,6 +3551,24 @@ class Cleaner(tk.Tk):
         pkgs = {self.tree.set(i, "package") for i in ids}
         return [a for a in self.all_apps if a.get("package") in pkgs]
 
+    def _tree_icon_for_app(self, app):
+        path = str(app.get("icon_path") or "")
+        if not path or not Path(path).is_file():
+            return ""
+        key = (path, 28)
+        if key in self.icon_images:
+            return self.icon_images[key]
+        try:
+            with Image.open(path) as im:
+                im = im.convert("RGBA")
+                im.thumbnail((28, 28), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(im.copy())
+            self.icon_images[key] = photo
+            return photo
+        except Exception as exc:
+            resolver_log(f"ICON UI load failed {path}: {exc!r}")
+            return ""
+
     def apply_view(self):
         mode = self.view_var.get()
         if hasattr(self, "view_label_var"):
@@ -3568,6 +3678,7 @@ class Cleaner(tk.Tk):
             tag = app["priority"].lower()
             iid = self.tree.insert(
                 "", "end",
+                image=self._tree_icon_for_app(app),
                 values=(
                     "☑" if app["package"] in self.checked_packages else "☐",
                     app["priority"],
@@ -3879,6 +3990,7 @@ class Cleaner(tk.Tk):
                     )
 
                     app["sha256"] = sha256_hex
+                    app["icon_path"] = icon_cache_path(sha256_hex)
 
                     if real_label:
                         app["app_name"] = real_label
