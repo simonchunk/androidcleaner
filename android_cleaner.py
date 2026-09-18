@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.12"
+APP_VERSION = "1.2.13"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -36,6 +36,10 @@ BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False
 # Runtime application directory. Kept as an explicit alias because the icon helper
 # pipeline historically referenced APP_DIR while the packaged app uses BASE_DIR.
 APP_DIR = BASE_DIR
+
+def bundled_asset(*parts):
+    return APP_DIR.joinpath("assets", *parts)
+
 PRODUCTION_CONFIG_PATH = BASE_DIR / "production_config.json"
 DATA_DIR = Path(os.getenv("LOCALAPPDATA", BASE_DIR)) / "TheiPhoneGuyAndroidCleaner"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -430,6 +434,11 @@ def run_adb(args, timeout=20):
         creationflags=_flags()
     )
     return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+def adb_run(args, timeout=20):
+    """CompletedProcess-compatible wrapper around the app's normal ADB runner."""
+    code, out, err = run_adb(args, timeout=timeout)
+    return subprocess.CompletedProcess(args=args, returncode=code, stdout=out, stderr=err)
 
 def shell(serial, args, timeout=20):
     return run_adb(["-s", serial, "shell"] + args, timeout=timeout)
@@ -2736,7 +2745,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.12 Dark UI + Icon Helper Fix loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.13 UI Polish + Icon Runner Fix loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -3172,7 +3181,7 @@ class Cleaner(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         self.geometry("1540x900")
-        self.minsize(1250, 760)
+        self.minsize(1250, 720)
 
         self.C = {
             "bg": "#061521",
@@ -3197,11 +3206,19 @@ class Cleaner(ctk.CTk):
         header.pack_propagate(False)
 
         brand = ctk.CTkFrame(header, fg_color="transparent")
-        brand.pack(side="left", padx=(28, 16), pady=20)
-        ctk.CTkLabel(brand, text="▯", font=("Segoe UI", 38, "bold"),
-                     text_color="#55a8ff").pack(side="left", padx=(0, 10))
-        ctk.CTkLabel(brand, text="The iPhone Guy", font=("Segoe UI", 18, "bold"),
-                     text_color="#55a8ff").pack(side="left")
+        brand.pack(side="left", padx=(20, 12), pady=7)
+        self.brand_image = None
+        try:
+            brand_path = bundled_asset("tig_red_brand.png")
+            with Image.open(brand_path) as _brand:
+                _brand = _brand.convert("RGB")
+                self.brand_image = ctk.CTkImage(light_image=_brand.copy(), dark_image=_brand.copy(),
+                                                size=(280,96))
+            ctk.CTkLabel(brand, text="", image=self.brand_image).pack()
+        except Exception as exc:
+            resolver_log(f"BRAND image load failed: {exc!r}")
+            ctk.CTkLabel(brand,text="The iPhone Guy",font=("Segoe UI",20,"bold"),
+                         text_color="#ff334f").pack()
         ctk.CTkFrame(header, width=1, fg_color=C["line"]).pack(side="left", fill="y", pady=22, padx=8)
 
         title = ctk.CTkFrame(header, fg_color="transparent")
@@ -3305,13 +3322,18 @@ class Cleaner(ctk.CTk):
         try: style.theme_use("clam")
         except Exception: pass
         style.configure("Modern.Treeview", background="#0d1e2e", fieldbackground="#0d1e2e",
-                        foreground="#f4f7fb", rowheight=76, borderwidth=0,
+                        foreground="#f4f7fb", rowheight=72, borderwidth=0, relief="flat",
+                        bordercolor="#0b1d2d", lightcolor="#0b1d2d", darkcolor="#0b1d2d",
                         font=("Segoe UI", 10))
         style.map("Modern.Treeview", background=[("selected","#164d82")],
                   foreground=[("selected","#ffffff")])
         style.configure("Modern.Treeview.Heading", background="#102438", foreground="#c8d4df",
                         relief="flat", padding=(8,10), font=("Segoe UI Semibold",10))
         style.map("Modern.Treeview.Heading", background=[("active","#17344f")])
+        try:
+            style.layout("Modern.Treeview", [("Treeview.treearea", {"sticky":"nswe"})])
+        except Exception:
+            pass
 
         cols=("checked","app","priority","app_type","installer","installed","package","reputation",
               "status","identity","version","updated","special","online","popup","reason")
@@ -3333,15 +3355,17 @@ class Cleaner(ctk.CTk):
         self.tree.column("#0",width=72,minwidth=72,stretch=False,anchor="center")
         self.tree.column("checked",width=46,minwidth=46,stretch=False,anchor="center")
         self.tree["displaycolumns"]=("checked","app","priority","app_type","installer","installed")
-        ys=ttk.Scrollbar(table,orient="vertical",command=self.tree.yview)
+        ys=ctk.CTkScrollbar(table,orientation="vertical",command=self.tree.yview,
+                            width=12,corner_radius=6,fg_color=C["card"],
+                            button_color="#24445e",button_hover_color=C["blue"])
         self.tree.configure(yscrollcommand=ys.set)
         self.tree.pack(side="left",fill="both",expand=True)
-        ys.pack(side="right",fill="y")
+        ys.pack(side="right",fill="y",padx=(4,0))
         self.tree.bind("<Button-1>",self.on_tree_click,add="+")
         self.tree.bind("<<TreeviewSelect>>",lambda e:self.update_selection_summary())
-        self.tree.tag_configure("critical",background="#2c1820",foreground="#ffffff")
-        self.tree.tag_configure("high",background="#261f17",foreground="#ffffff")
-        self.tree.tag_configure("check",background="#222216",foreground="#ffffff")
+        self.tree.tag_configure("critical",background="#35131d",foreground="#ffffff")
+        self.tree.tag_configure("high",background="#2b2114",foreground="#ffffff")
+        self.tree.tag_configure("check",background="#252414",foreground="#ffffff")
         self.tree.tag_configure("baseline",foreground="#708396")
         self.tree.tag_configure("protected",background="#0a1722",foreground="#627487")
         self.icon_images={}
@@ -3350,7 +3374,7 @@ class Cleaner(ctk.CTk):
         self.scan_overlay=ctk.CTkFrame(left,fg_color=C["card"],corner_radius=14,
                                        border_width=1,border_color=C["line"],width=360,height=150)
         self.scan_message_var=tk.StringVar(value="Scanning connected phone…")
-        ctk.CTkLabel(self.scan_overlay,text="Scanning phone",font=("Segoe UI",18,"bold"),
+        ctk.CTkLabel(self.scan_overlay,text="Scanning phone",font=("Segoe UI",17,"bold"),
                      text_color=C["text"]).pack(padx=28,pady=(24,4))
         ctk.CTkLabel(self.scan_overlay,textvariable=self.scan_message_var,text_color=C["muted"],
                      font=("Segoe UI",11)).pack(padx=28,pady=(0,14))
@@ -3370,53 +3394,53 @@ class Cleaner(ctk.CTk):
         self.assessment_icon_image = None
 
         assess_top = ctk.CTkFrame(right, fg_color="transparent")
-        assess_top.pack(fill="x", padx=18, pady=(16,10))
+        assess_top.pack(fill="x", padx=16, pady=(10,5))
         assess_text = ctk.CTkFrame(assess_top, fg_color="transparent")
         assess_text.pack(side="left", fill="both", expand=True)
         ctk.CTkLabel(assess_text,text="App assessment",text_color=C["muted"],
                      font=("Segoe UI",11)).pack(anchor="w")
         ctk.CTkLabel(assess_text,textvariable=self.selection_var,text_color=C["text"],
                      font=("Segoe UI",18,"bold"),justify="left",anchor="w",
-                     wraplength=285).pack(fill="x",pady=(8,0))
+                     wraplength=300).pack(fill="x",pady=(4,0))
 
         self.assessment_icon_frame = ctk.CTkFrame(
-            assess_top, width=142, height=142, corner_radius=24,
-            fg_color="#0a2940", border_width=2, border_color="#123e5e"
+            assess_top, width=112, height=112, corner_radius=20,
+            fg_color="#0a2940", border_width=2, border_color="#17547a"
         )
         self.assessment_icon_frame.pack(side="right", padx=(12,0))
         self.assessment_icon_frame.pack_propagate(False)
         self.assessment_icon_label = ctk.CTkLabel(
-            self.assessment_icon_frame, text="", width=128, height=128
+            self.assessment_icon_frame, text="", width=100, height=100
         )
         self.assessment_icon_label.place(relx=.5,rely=.5,anchor="center")
         ctk.CTkFrame(right,height=1,fg_color=C["line"]).pack(fill="x",padx=18)
 
-        ctk.CTkLabel(right,text="DETAILS",text_color=C["muted"],font=("Segoe UI",10,"bold")).pack(anchor="w",padx=18,pady=(14,3))
+        ctk.CTkLabel(right,text="DETAILS",text_color=C["muted"],font=("Segoe UI",10,"bold")).pack(anchor="w",padx=16,pady=(6,1))
         ctk.CTkLabel(right,textvariable=self.intel_history_var,text_color=C["text"],justify="left",
-                     anchor="w",wraplength=410).pack(fill="x",padx=18,pady=(2,10))
+                     anchor="w",wraplength=410).pack(fill="x",padx=16,pady=(1,4))
 
         risk=ctk.CTkFrame(right,fg_color=("#fff0f2","#2b1720"),corner_radius=10,border_width=1,border_color="#8d2c3b")
-        risk.pack(fill="x",padx=18,pady=8)
+        risk.pack(fill="x",padx=16,pady=4)
         ctk.CTkLabel(risk,text="⚠  Why we're showing this",font=("Segoe UI",12,"bold"),
-                     text_color=C["text"]).pack(anchor="w",padx=14,pady=(12,4))
+                     text_color=C["text"]).pack(anchor="w",padx=12,pady=(7,2))
         ctk.CTkLabel(risk,textvariable=self.intel_reason_var,text_color=("#5d2933","#e6cbd0"),
-                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=14,pady=(2,12))
+                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,7))
 
         intel=ctk.CTkFrame(right,fg_color=C["card2"],corner_radius=10,border_width=1,border_color=C["line"])
-        intel.pack(fill="x",padx=18,pady=8)
+        intel.pack(fill="x",padx=16,pady=4)
         ctk.CTkLabel(intel,text="🔧  Repair intelligence",font=("Segoe UI",12,"bold"),
-                     text_color=C["text"]).pack(anchor="w",padx=14,pady=(12,4))
+                     text_color=C["text"]).pack(anchor="w",padx=12,pady=(7,2))
         ctk.CTkLabel(intel,textvariable=self.intel_title_var,text_color=C["muted"],
-                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=14,pady=(2,12))
+                     justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,7))
 
         actions=ctk.CTkFrame(right,fg_color="transparent")
-        actions.pack(fill="x",side="bottom",padx=18,pady=16)
+        actions.pack(fill="x",side="bottom",padx=16,pady=(6,10))
         actions.grid_columnconfigure((0,1),weight=1)
-        self.remove_button=ctk.CTkButton(actions,text="🗑  Remove App",height=46,corner_radius=9,
+        self.remove_button=ctk.CTkButton(actions,text="🗑  Remove App",height=42,corner_radius=9,
                                          fg_color=C["red"],hover_color="#b92335",font=("Segoe UI",11,"bold"),
                                          command=self.uninstall)
         self.remove_button.grid(row=0,column=0,sticky="ew",padx=(0,6))
-        ctk.CTkButton(actions,text="🛡  Mark Safe",height=46,corner_radius=9,fg_color=("#dff7ee","#103b32"),
+        ctk.CTkButton(actions,text="🛡  Mark Safe",height=42,corner_radius=9,fg_color=("#dff7ee","#103b32"),
                       text_color=("#116b50","#61e7b1"),hover_color=("#c8efe2","#155443"),
                       border_width=1,border_color=("#51b99a","#267c64"),font=("Segoe UI",11,"bold"),
                       command=lambda:self.classify("Safe")).grid(row=0,column=1,sticky="ew",padx=(6,0))
@@ -3456,7 +3480,7 @@ class Cleaner(ctk.CTk):
         try:
             with Image.open(path) as im:
                 im = im.convert("RGBA")
-                im.thumbnail((118,118), Image.Resampling.LANCZOS)
+                im.thumbnail((92,92), Image.Resampling.LANCZOS)
                 self.assessment_icon_image = ctk.CTkImage(
                     light_image=im.copy(), dark_image=im.copy(), size=im.size
                 )
@@ -4547,7 +4571,8 @@ class Cleaner(ctk.CTk):
                 values=(
                     ("🔒" if self._is_protected_app(app) else ("☑" if app["package"] in self.checked_packages else "☐")),
                     app["app_name"],
-                    (f"【 {app['priority']} 】" if app.get("priority") in ("CRITICAL","HIGH","CHECK") else app.get("priority","")),
+                    ({"CRITICAL":"🔴  CRITICAL","HIGH":"🟠  HIGH","CHECK":"🟡  CHECK"}
+                     .get(app.get("priority"),app.get("priority",""))),
                     app.get("app_type", "UNKNOWN"),
                     app["installer_label"],
                     app.get("first_install", ""),

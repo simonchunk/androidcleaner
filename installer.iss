@@ -29,6 +29,7 @@ RestartApplications=no
 SetupLogging=yes
 
 [Files]
+Source: "package\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "package\icon-helper.jar"; DestDir: "{app}"; Flags: ignoreversion
 Source: "package\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
