@@ -33,3 +33,7 @@
 - Adds Appearance modes: Light, Dark and Follow Windows, persisted per workstation.
 - Dark mode uses dark risk colours while retaining CRITICAL/HIGH/CHECK distinction.
 - Local test only — do not publish this build as a GitHub Release yet.
+
+## Fix 1
+- Fixes startup crash caused by an incorrect `load_config()` helper reference.
+- Appearance now uses the application's existing `load_settings()` / `save_settings()` system.

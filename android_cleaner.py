@@ -2514,7 +2514,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(tk.Tk):
     def __init__(self):
-        self.appearance_mode = str(load_config().get("appearance", "Follow Windows"))
+        self.appearance_mode = str(load_settings().get("appearance", "Follow Windows"))
         self.checked_packages = set()
         super().__init__()
         self.title(APP_NAME)
@@ -2923,11 +2923,11 @@ class Cleaner(tk.Tk):
             return
         self.appearance_mode = mode
         try:
-            cfg = load_config()
-            cfg["appearance"] = mode
-            save_config(cfg)
-        except Exception:
-            pass
+            st = load_settings()
+            st["appearance"] = mode
+            save_settings(st)
+        except Exception as exc:
+            resolver_log(f"Appearance save failed: {exc!r}")
         self.apply_theme()
 
     def build(self):
