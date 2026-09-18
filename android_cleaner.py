@@ -26,13 +26,16 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.11"
+APP_VERSION = "1.2.12"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
 ADMIN_PIN_ITERATIONS = 200000
 ADMIN_SESSION_SECONDS = 15 * 60
 BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+# Runtime application directory. Kept as an explicit alias because the icon helper
+# pipeline historically referenced APP_DIR while the packaged app uses BASE_DIR.
+APP_DIR = BASE_DIR
 PRODUCTION_CONFIG_PATH = BASE_DIR / "production_config.json"
 DATA_DIR = Path(os.getenv("LOCALAPPDATA", BASE_DIR)) / "TheiPhoneGuyAndroidCleaner"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -2733,8 +2736,8 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.11 Serial Icon Fix loaded")
-        self.appearance_mode = str(load_settings().get("appearance", "Follow Windows"))
+        resolver_log("BUILD MARKER Android Cleaner v1.2.12 Dark UI + Icon Helper Fix loaded")
+        self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
         self.title(APP_NAME)
@@ -3089,12 +3092,8 @@ class Cleaner(ctk.CTk):
             return False
 
     def effective_theme(self):
-        choice = str(getattr(self, "appearance_mode", "Follow Windows") or "Follow Windows")
-        if choice == "Dark":
-            return "Dark"
-        if choice == "Light":
-            return "Light"
-        return "Dark" if self._windows_dark_mode() else "Light"
+        # v1.2.12: production UI is intentionally dark-only.
+        return "Dark"
 
     def _apply_tree_palette(self):
         if not hasattr(self, "tree"):
@@ -3108,7 +3107,7 @@ class Cleaner(ctk.CTk):
             bg, fg, head, sel = "#f8fafc", "#102030", "#dfe8f0", "#b9d9f7"
             crit, high, check, prot = "#f7dfe3", "#f5ead5", "#f4efcf", "#e5ebf0"
         style.configure("Modern.Treeview", background=bg, fieldbackground=bg,
-                        foreground=fg, rowheight=64, borderwidth=0,
+                        foreground=fg, rowheight=76, borderwidth=0,
                         font=("Segoe UI",10))
         style.map("Modern.Treeview", background=[("selected",sel)],
                   foreground=[("selected",fg)])
@@ -3148,23 +3147,14 @@ class Cleaner(ctk.CTk):
             if hasattr(self,"bottom_status_var"): self.bottom_status_var.set("Ready")
 
     def apply_theme(self):
-        mode = self.effective_theme()
-        ctk.set_appearance_mode(mode.lower())
-        if hasattr(self, "theme_button"):
-            self.theme_button.configure(text=("☾" if mode == "Dark" else "☀"))
+        ctk.set_appearance_mode("dark")
         self._apply_tree_palette()
 
     def set_appearance(self, mode):
-        if mode not in ("Light", "Dark", "Follow Windows"):
-            return
-        self.appearance_mode = mode
-        try:
-            st = load_settings()
-            st["appearance"] = mode
-            save_settings(st)
-        except Exception as exc:
-            resolver_log(f"Appearance save failed: {exc!r}")
-        self.apply_theme()
+        # Dark-only UI from v1.2.12 onward.
+        self.appearance_mode = "Dark"
+        ctk.set_appearance_mode("dark")
+        self._apply_tree_palette()
 
     def _show_advanced_menu(self):
         try:
@@ -3176,29 +3166,25 @@ class Cleaner(ctk.CTk):
             except Exception: pass
 
     def _quick_theme_toggle(self):
-        target = "Light" if ctk.get_appearance_mode() == "Dark" else "Dark"
-        self.set_appearance(target)
-        ctk.set_appearance_mode(target.lower())
-        if hasattr(self, "theme_button"):
-            self.theme_button.configure(text=("☾" if target == "Dark" else "☀"))
-        self._apply_tree_palette()
+        return
 
     def build(self):
-        ctk.set_appearance_mode("dark" if self.effective_theme() == "Dark" else "light")
+        ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         self.geometry("1540x900")
         self.minsize(1250, 760)
 
         self.C = {
-            "bg": ("#eef3f8", "#071522"),
-            "header": ("#ffffff", "#0b1d2d"),
-            "card": ("#ffffff", "#0d1e2e"),
-            "card2": ("#f4f7fa", "#11283c"),
-            "line": ("#d7e0e8", "#20384d"),
-            "text": ("#102030", "#f4f7fb"),
-            "muted": ("#657789", "#9fb0c2"),
-            "blue": "#2188ff", "red": "#e02d42", "orange": "#ff9b38",
-            "green": "#21cf87"
+            "bg": "#061521",
+            "header": "#081a29",
+            "card": "#0b1d2d",
+            "card2": "#10283b",
+            "line": "#1d405b",
+            "text": "#f4f7fb",
+            "muted": "#9fb5c9",
+            "blue": "#168df2", "blue_hover": "#24a0ff",
+            "red": "#ef2f49", "orange": "#f5a000",
+            "green": "#13bf78"
         }
         C = self.C
 
@@ -3227,19 +3213,14 @@ class Cleaner(ctk.CTk):
 
         actions = ctk.CTkFrame(header, fg_color="transparent")
         actions.pack(side="right", padx=24)
-        self.theme_button = ctk.CTkButton(actions, text="☾", width=48, height=38,
-                                          corner_radius=19, fg_color=C["card2"],
-                                          hover_color=("#e3ebf3","#18354d"),
-                                          command=self._quick_theme_toggle)
-        self.theme_button.pack(side="left", padx=5)
         ctk.CTkButton(actions, text="?  Help", width=92, height=38, corner_radius=9,
                       fg_color="transparent", border_width=1, border_color=C["line"],
-                      hover_color=("#e9eff5","#17344f"),
+                      hover_color="#173f5e",
                       command=self.show_how_to_connect).pack(side="left", padx=5)
         self.advanced_button = ctk.CTkButton(actions, text="⚙  Advanced", width=118, height=38,
                                              corner_radius=9, fg_color="transparent",
                                              border_width=1, border_color=C["line"],
-                                             hover_color=("#e9eff5","#17344f"),
+                                             hover_color="#173f5e",
                                              command=self._show_advanced_menu)
         self.advanced_button.pack(side="left", padx=5)
         self.advanced_menu = tk.Menu(self, tearoff=False)
@@ -3269,14 +3250,20 @@ class Cleaner(ctk.CTk):
         self.nav_buttons = {}
         for label in ("Cleanup","Review","Games","Unused Apps","All Apps"):
             b = ctk.CTkButton(nav, text=label, height=46, corner_radius=9,
-                              fg_color=C["card2"], hover_color=("#dce9f5","#173b59"),
+                              fg_color=C["card2"], hover_color="#17496e",
+                              border_width=1, border_color=C["line"],
+                              font=("Segoe UI", 11, "bold"),
                               command=lambda m=label:self.set_view(m))
             b.pack(side="left", padx=(10 if label=="Cleanup" else 4,4), pady=10)
             self.nav_buttons[label] = b
 
-        ctk.CTkButton(nav, text="↻  Rescan", width=110, height=40, corner_radius=9,
-                      fg_color="transparent", border_width=1, border_color=C["line"],
-                      hover_color=("#e8eef4","#17344f"), command=self.scan).pack(side="right", padx=10)
+        self.rescan_button = ctk.CTkButton(
+            nav, text="↻  Rescan", width=118, height=42, corner_radius=9,
+            fg_color=C["blue"], border_width=2, border_color="#45b2ff",
+            hover_color=C["blue_hover"], font=("Segoe UI", 11, "bold"),
+            command=self.scan
+        )
+        self.rescan_button.pack(side="right", padx=10)
         self.onset_var = getattr(self, "onset_var", tk.StringVar(value="Unknown"))
         onset = ctk.CTkComboBox(nav, variable=self.onset_var, values=ONSET_OPTIONS,
                                 width=170, height=40, corner_radius=9, fg_color=C["card2"],
@@ -3318,7 +3305,7 @@ class Cleaner(ctk.CTk):
         try: style.theme_use("clam")
         except Exception: pass
         style.configure("Modern.Treeview", background="#0d1e2e", fieldbackground="#0d1e2e",
-                        foreground="#f4f7fb", rowheight=64, borderwidth=0,
+                        foreground="#f4f7fb", rowheight=76, borderwidth=0,
                         font=("Segoe UI", 10))
         style.map("Modern.Treeview", background=[("selected","#164d82")],
                   foreground=[("selected","#ffffff")])
@@ -3343,7 +3330,7 @@ class Cleaner(ctk.CTk):
             self.tree.heading(c,text=heads[c],command=lambda col=c:self.sort_by(col,False))
             self.tree.column(c,width=widths[c],anchor="w")
         self.tree.heading("#0",text="")
-        self.tree.column("#0",width=58,minwidth=58,stretch=False,anchor="center")
+        self.tree.column("#0",width=72,minwidth=72,stretch=False,anchor="center")
         self.tree.column("checked",width=46,minwidth=46,stretch=False,anchor="center")
         self.tree["displaycolumns"]=("checked","app","priority","app_type","installer","installed")
         ys=ttk.Scrollbar(table,orient="vertical",command=self.tree.yview)
@@ -3380,9 +3367,28 @@ class Cleaner(ctk.CTk):
         self.intel_title_var=tk.StringVar(value="")
         self.intel_history_var=tk.StringVar(value="")
         self.intel_reason_var=tk.StringVar(value="")
-        ctk.CTkLabel(right,text="App assessment",text_color=C["muted"],font=("Segoe UI",11)).pack(anchor="w",padx=18,pady=(16,0))
-        ctk.CTkLabel(right,textvariable=self.selection_var,text_color=C["text"],font=("Segoe UI",17,"bold"),
-                     justify="left",anchor="w",wraplength=410).pack(fill="x",padx=18,pady=(8,12))
+        self.assessment_icon_image = None
+
+        assess_top = ctk.CTkFrame(right, fg_color="transparent")
+        assess_top.pack(fill="x", padx=18, pady=(16,10))
+        assess_text = ctk.CTkFrame(assess_top, fg_color="transparent")
+        assess_text.pack(side="left", fill="both", expand=True)
+        ctk.CTkLabel(assess_text,text="App assessment",text_color=C["muted"],
+                     font=("Segoe UI",11)).pack(anchor="w")
+        ctk.CTkLabel(assess_text,textvariable=self.selection_var,text_color=C["text"],
+                     font=("Segoe UI",18,"bold"),justify="left",anchor="w",
+                     wraplength=285).pack(fill="x",pady=(8,0))
+
+        self.assessment_icon_frame = ctk.CTkFrame(
+            assess_top, width=142, height=142, corner_radius=24,
+            fg_color="#0a2940", border_width=2, border_color="#123e5e"
+        )
+        self.assessment_icon_frame.pack(side="right", padx=(12,0))
+        self.assessment_icon_frame.pack_propagate(False)
+        self.assessment_icon_label = ctk.CTkLabel(
+            self.assessment_icon_frame, text="", width=128, height=128
+        )
+        self.assessment_icon_label.place(relx=.5,rely=.5,anchor="center")
         ctk.CTkFrame(right,height=1,fg_color=C["line"]).pack(fill="x",padx=18)
 
         ctk.CTkLabel(right,text="DETAILS",text_color=C["muted"],font=("Segoe UI",10,"bold")).pack(anchor="w",padx=18,pady=(14,3))
@@ -3436,6 +3442,29 @@ class Cleaner(ctk.CTk):
         if mode in ("Cleanup", "Games", "Unused Apps"):
             self.after(75, lambda m=mode: self.resolve_view_names(m))
 
+    def _set_assessment_icon(self, app=None):
+        if not hasattr(self, "assessment_icon_label"):
+            return
+        self.assessment_icon_image = None
+        if not app:
+            self.assessment_icon_label.configure(image=None, text="")
+            return
+        path = str(app.get("icon_path") or "")
+        if not path or not Path(path).is_file():
+            self.assessment_icon_label.configure(image=None, text="")
+            return
+        try:
+            with Image.open(path) as im:
+                im = im.convert("RGBA")
+                im.thumbnail((118,118), Image.Resampling.LANCZOS)
+                self.assessment_icon_image = ctk.CTkImage(
+                    light_image=im.copy(), dark_image=im.copy(), size=im.size
+                )
+            self.assessment_icon_label.configure(image=self.assessment_icon_image, text="")
+        except Exception as exc:
+            resolver_log(f"ICON ASSESSMENT load failed {path}: {exc!r}")
+            self.assessment_icon_label.configure(image=None, text="")
+
     def update_selection_summary(self):
         n_checked = len(self.checked_packages)
         if hasattr(self, "remove_button"):
@@ -3444,17 +3473,20 @@ class Cleaner(ctk.CTk):
         if not apps:
             self.selection_var.set("Select an app to review it.")
             self.intel_title_var.set(""); self.intel_history_var.set(""); self.intel_reason_var.set("")
+            self._set_assessment_icon(None)
             return
         if len(apps) > 1:
             self.selection_var.set(f"{len(apps)} apps selected")
             self.intel_title_var.set("Repair intelligence will be recorded per app; group removals remain group-associated evidence.")
             self.intel_history_var.set(""); self.intel_reason_var.set("")
+            self._set_assessment_icon(None)
             return
         a = apps[0]
         name=a.get("app_name") or a.get("package","")
         rep=a.get("reputation") or "UNKNOWN"
         priority=a.get("priority") or "INFO"
         self.selection_var.set(f"{name}\n{priority}   •   {rep}")
+        self._set_assessment_icon(a)
 
         stats=knowledge_stats(a.get("package")) or {}
         evidence=repair_evidence_stats(a.get("package"))
@@ -4236,13 +4268,13 @@ class Cleaner(ctk.CTk):
         path = str(app.get("icon_path") or "")
         if not path or not Path(path).is_file():
             return ""
-        key = (path, 30)
+        key = (path, 46)
         if key in self.icon_images:
             return self.icon_images[key]
         try:
             with Image.open(path) as im:
                 im = im.convert("RGBA")
-                im.thumbnail((30, 30), Image.Resampling.LANCZOS)
+                im.thumbnail((46, 46), Image.Resampling.LANCZOS)
                 photo = ImageTk.PhotoImage(im.copy())
             self.icon_images[key] = photo
             return photo
@@ -4342,21 +4374,23 @@ class Cleaner(ctk.CTk):
                         return
                     package = str(app.get("package") or "")
                     existing = str(app.get("icon_path") or "")
-                    if existing and Path(existing).is_file() and Path(existing).stat().st_size > 100:
+                    attempted += 1
+                    resolver_log(
+                        f"ICON PIPELINE QUEUE {attempted}/{total} {package}: "
+                        "invoking Android device renderer"
+                    )
+                    icon = pull_device_rendered_icon(serial, app)
+                    if not icon and existing and Path(existing).is_file() and Path(existing).stat().st_size > 100:
+                        icon = existing
+                        resolver_log(f"ICON PIPELINE FALLBACK CACHE {package}: {existing}")
+                    elif not icon:
+                        icon = pull_apk_icon_fallback(serial, app)
+                    if icon:
                         done += 1
-                        resolver_log(f"ICON PIPELINE CACHE {package}: {existing}")
+                        app["icon_path"] = icon
+                        resolver_log(f"ICON PIPELINE RESULT {package}: loaded {icon}")
                     else:
-                        attempted += 1
-                        resolver_log(
-                            f"ICON PIPELINE QUEUE {attempted}/{total} {package}: "
-                            "invoking Android device renderer"
-                        )
-                        icon = pull_apk_icon(serial, app)
-                        if icon:
-                            done += 1
-                            resolver_log(f"ICON PIPELINE RESULT {package}: loaded {icon}")
-                        else:
-                            resolver_log(f"ICON PIPELINE RESULT {package}: no icon")
+                        resolver_log(f"ICON PIPELINE RESULT {package}: no icon")
                     if hasattr(self, "icon_status_var"):
                         self.after(
                             0,
@@ -4391,6 +4425,14 @@ class Cleaner(ctk.CTk):
 
     def apply_view(self):
         mode = self.view_var.get()
+        if hasattr(self, "nav_buttons"):
+            for label, button in self.nav_buttons.items():
+                active = label == mode
+                button.configure(
+                    fg_color=(self.C["blue"] if active else self.C["card2"]),
+                    border_color=("#58baff" if active else self.C["line"]),
+                    border_width=(2 if active else 1)
+                )
         if hasattr(self, "view_label_var"):
             self.view_label_var.set(mode)
 
@@ -4505,7 +4547,7 @@ class Cleaner(ctk.CTk):
                 values=(
                     ("🔒" if self._is_protected_app(app) else ("☑" if app["package"] in self.checked_packages else "☐")),
                     app["app_name"],
-                    app["priority"],
+                    (f"【 {app['priority']} 】" if app.get("priority") in ("CRITICAL","HIGH","CHECK") else app.get("priority","")),
                     app.get("app_type", "UNKNOWN"),
                     app["installer_label"],
                     app.get("first_install", ""),
@@ -4540,12 +4582,7 @@ class Cleaner(ctk.CTk):
             )
 
 
-        # The table render is the guaranteed point where triage results exist.
-        # Queue the icon pipeline from the Tk/UI thread instead of depending on
-        # resolver or scan-worker callbacks.
-        self.after_idle(self._ensure_icon_pipeline_after_view)
-
-        # v1.2.9: hook the actual Treeview population path.
+        # Hook the actual Treeview population path.
         resolver_log(
             "ICON TREEVIEW HOOK method=apply_view serial={} apps={}".format(
                 self.serial(), len(self.all_apps or [])
