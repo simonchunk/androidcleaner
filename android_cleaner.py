@@ -2949,6 +2949,15 @@ class Cleaner(tk.Tk):
         ttk.Label(left, text="Android Cleaner", style="Header.TLabel").pack(anchor="w")
         ttk.Label(left, text="Connect a customer phone — scanning starts automatically.", style="Sub.TLabel").pack(anchor="w", pady=(1, 0))
         ttk.Button(header, text="How to Connect", command=self.show_how_to_connect, style="Primary.TButton").pack(side="right", padx=(8, 0))
+
+        appearance_btn = ttk.Menubutton(header, text="Appearance ▾")
+        appearance_menu = tk.Menu(appearance_btn, tearoff=False)
+        appearance_menu.add_command(label="Light", command=lambda:self.set_appearance("Light"))
+        appearance_menu.add_command(label="Dark", command=lambda:self.set_appearance("Dark"))
+        appearance_menu.add_command(label="Follow Windows", command=lambda:self.set_appearance("Follow Windows"))
+        appearance_btn["menu"] = appearance_menu
+        appearance_btn.pack(side="right", padx=(8, 0))
+
         advanced_btn = ttk.Menubutton(header, text="Advanced ▾")
         self.advanced_menu = tk.Menu(advanced_btn, tearoff=False)
         advanced_btn["menu"] = self.advanced_menu

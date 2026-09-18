@@ -37,3 +37,8 @@
 ## Fix 1
 - Fixes startup crash caused by an incorrect `load_config()` helper reference.
 - Appearance now uses the application's existing `load_settings()` / `save_settings()` system.
+
+## Fix 2
+- Adds an always-visible `Appearance` menu to the main header.
+- Appearance is available in normal Staff Mode and is not Admin-gated.
+- Light / Dark / Follow Windows remain persisted per workstation.
