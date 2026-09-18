@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.15"
+APP_VERSION = "1.2.16"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2804,7 +2804,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.15 ImageDraw Boot Fix loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.16 Assessment Badges Brand Fix loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -2838,6 +2838,7 @@ class Cleaner(ctk.CTk):
         self._last_shared_sync = None
         self._shared_sync_running = False
         self._shared_sync_pending_force = False
+        self._assessment_package = None
 
         self.view_var = tk.StringVar(value="Cleanup")
         self.count_var = tk.StringVar(value="Showing 0 apps • 0 selected")
@@ -3302,7 +3303,7 @@ class Cleaner(ctk.CTk):
                       fg_color="transparent", border_width=1, border_color=C["line"],
                       hover_color="#173f5e",
                       command=self.show_how_to_connect).pack(side="left", padx=5)
-        self.advanced_button = ctk.CTkButton(actions, text="⚙  Advanced", width=118, height=38,
+        self.advanced_button = ctk.CTkButton(actions, text="Advanced", image=self._ui_icon("settings","#ffffff",18), compound="left", width=118, height=38,
                                              corner_radius=9, fg_color="transparent",
                                              border_width=1, border_color=C["line"],
                                              hover_color="#173f5e",
@@ -3426,7 +3427,7 @@ class Cleaner(ctk.CTk):
         self.tree.column("#0",width=72,minwidth=72,stretch=False,anchor="center")
         self.tree.column("checked",width=46,minwidth=46,stretch=False,anchor="center")
         self.tree["displaycolumns"]=("checked","app","priority","app_type","installer","installed")
-        ys=ctk.CTkScrollbar(table,orientation="vertical",command=self.tree.yview,
+        ys=ctk.CTkScrollbar(table,orientation="vertical",command=self._tree_yview,
                             width=12,corner_radius=6,fg_color=C["card"],
                             button_color="#24445e",button_hover_color=C["blue"])
         self.tree.configure(yscrollcommand=ys.set)
@@ -3434,6 +3435,8 @@ class Cleaner(ctk.CTk):
         ys.pack(side="right",fill="y",padx=(4,0))
         self.tree.bind("<Button-1>",self.on_tree_click,add="+")
         self.tree.bind("<<TreeviewSelect>>",lambda e:self.update_selection_summary())
+        self.tree.bind("<MouseWheel>",lambda e:self.after_idle(self._refresh_risk_badges),add="+")
+        self.tree.bind("<Configure>",lambda e:self.after_idle(self._refresh_risk_badges),add="+")
         self.tree.tag_configure("critical",background="#35131d",foreground="#ffffff")
         self.tree.tag_configure("high",background="#2b2114",foreground="#ffffff")
         self.tree.tag_configure("check",background="#252414",foreground="#ffffff")
@@ -3492,14 +3495,16 @@ class Cleaner(ctk.CTk):
 
         risk=ctk.CTkFrame(right,fg_color=("#fff0f2","#2b1720"),corner_radius=10,border_width=1,border_color="#8d2c3b")
         risk.pack(fill="x",padx=16,pady=4)
-        ctk.CTkLabel(risk,text="⚠  Why we're showing this",font=("Segoe UI",12,"bold"),
+        ctk.CTkLabel(risk,text="Why we're showing this",
+                     image=self._ui_icon("warning","#ff6477",18),compound="left",
+                     font=("Segoe UI",12,"bold"),
                      text_color=C["text"]).pack(anchor="w",padx=12,pady=(7,2))
         ctk.CTkLabel(risk,textvariable=self.intel_reason_var,text_color=("#5d2933","#e6cbd0"),
                      justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,7))
 
         intel=ctk.CTkFrame(right,fg_color=C["card2"],corner_radius=10,border_width=1,border_color=C["line"])
         intel.pack(fill="x",padx=16,pady=4)
-        ctk.CTkLabel(intel,text="🔧  Repair intelligence",font=("Segoe UI",12,"bold"),
+        ctk.CTkLabel(intel,text="Repair intelligence",image=self._ui_icon("repair","#78bfff",18),compound="left",font=("Segoe UI",12,"bold"),
                      text_color=C["text"]).pack(anchor="w",padx=12,pady=(7,2))
         ctk.CTkLabel(intel,textvariable=self.intel_title_var,text_color=C["muted"],
                      justify="left",anchor="w",wraplength=390).pack(fill="x",padx=12,pady=(1,7))
@@ -4315,8 +4320,8 @@ class Cleaner(ctk.CTk):
         for iid in self.tree.get_children(""):
             pkg = self.tree.set(iid, "package")
             app = self.rows.get(iid)
-            self.tree.set(iid, "checked", "🔒" if app and self._is_protected_app(app)
-                          else ("☑" if pkg in self.checked_packages else "☐"))
+            self.tree.set(iid, "checked", "LOCK" if app and self._is_protected_app(app)
+                          else ("X" if pkg in self.checked_packages else ""))
         self.update_count_label()
 
     def on_tree_click(self, event):
@@ -4329,6 +4334,10 @@ class Cleaner(ctk.CTk):
         # the workshop UI feeling non-clickable while retaining checkbox multi-select.
         self.tree.selection_set(row)
         self.tree.focus(row)
+        try:
+            self._assessment_package = self.tree.set(row, "package") or self._assessment_package
+        except Exception:
+            pass
         if self.tree.identify_column(event.x) == "#1":
             pkg = self.tree.set(row, "package")
             app = self.rows.get(row)
@@ -4338,7 +4347,7 @@ class Cleaner(ctk.CTk):
                 self.checked_packages.remove(pkg)
             else:
                 self.checked_packages.add(pkg)
-            self.tree.set(row, "checked", "☑" if pkg in self.checked_packages else "☐")
+            self.tree.set(row, "checked", "X" if pkg in self.checked_packages else "")
             self.update_count_label()
         self.after_idle(self.update_selection_summary)
 
@@ -4357,6 +4366,8 @@ class Cleaner(ctk.CTk):
             return checked
         ids = self.tree.selection()
         pkgs = {self.tree.set(i, "package") for i in ids}
+        if not pkgs and self._assessment_package:
+            pkgs = {self._assessment_package}
         return [a for a in self.all_apps
                 if a.get("package") in pkgs and not self._is_protected_app(a)]
 
@@ -4530,6 +4541,51 @@ class Cleaner(ctk.CTk):
         t = str(app.get("app_type") or app.get("type") or "").upper().strip()
         return t in ("SYSTEM", "OEM / SYSTEM", "SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM")
 
+    def _clear_risk_badges(self):
+        for widget in getattr(self, "_risk_badge_widgets", []):
+            try:
+                widget.destroy()
+            except Exception:
+                pass
+        self._risk_badge_widgets=[]
+
+    def _risk_badge_click(self, iid):
+        try:
+            self.tree.selection_set(iid)
+            self.tree.focus(iid)
+            app=self.rows.get(iid)
+            if app:
+                self._assessment_package=app.get("package")
+            self.update_selection_summary()
+        except Exception:
+            pass
+
+    def _refresh_risk_badges(self):
+        self._clear_risk_badges()
+        palette={"CRITICAL":("#d92742","#ffffff"),"HIGH":("#d97706","#ffffff"),"CHECK":("#b88a00","#ffffff")}
+        widgets=[]
+        for iid,app in list(getattr(self,"rows",{}).items()):
+            risk=str(app.get("priority") or "").upper()
+            if risk not in palette:
+                continue
+            box=self.tree.bbox(iid,"priority")
+            if not box:
+                continue
+            x,y,w,h=box
+            bg,fg=palette[risk]
+            badge=tk.Label(self.tree,text=risk,bg=bg,fg=fg,font=("Segoe UI",9,"bold"),
+                           bd=0,relief="flat",padx=10,pady=2,cursor="hand2")
+            bw=min(max(70,len(risk)*9+24),max(30,w-12))
+            bh=min(26,max(20,h-10))
+            badge.place(x=x+(w-bw)//2,y=y+(h-bh)//2,width=bw,height=bh)
+            badge.bind("<Button-1>",lambda e,row=iid:self._risk_badge_click(row))
+            widgets.append(badge)
+        self._risk_badge_widgets=widgets
+
+    def _tree_yview(self, *args):
+        self.tree.yview(*args)
+        self.after_idle(self._refresh_risk_badges)
+
     def apply_view(self):
         mode = self.view_var.get()
         if hasattr(self, "nav_buttons"):
@@ -4641,13 +4697,14 @@ class Cleaner(ctk.CTk):
             ]
 
         # Preserve the technician's selected app across icon/name/retriage repaints.
-        selected_package = None
+        selected_package = self._assessment_package
         try:
             selected_ids = self.tree.selection()
             if selected_ids:
-                selected_package = self.tree.set(selected_ids[0], "package")
+                selected_package = self.tree.set(selected_ids[0], "package") or selected_package
+                self._assessment_package = selected_package
         except Exception:
-            selected_package = None
+            pass
 
         for iid in self.tree.get_children():
             self.tree.delete(iid)
@@ -4664,10 +4721,9 @@ class Cleaner(ctk.CTk):
                 "", "end",
                 image=self._tree_icon_for_app(app),
                 values=(
-                    ("🔒" if self._is_protected_app(app) else ("☑" if app["package"] in self.checked_packages else "☐")),
+                    ("LOCK" if self._is_protected_app(app) else ("X" if app["package"] in self.checked_packages else "")),
                     app["app_name"],
-                    ({"CRITICAL":"CRITICAL","HIGH":"HIGH","CHECK":"CHECK"}
-                     .get(app.get("priority"),app.get("priority",""))),
+                    ("" if app.get("priority") in ("CRITICAL","HIGH","CHECK") else app.get("priority","")),
                     app.get("app_type", "UNKNOWN"),
                     app["installer_label"],
                     app.get("first_install", ""),
@@ -4696,8 +4752,9 @@ class Cleaner(ctk.CTk):
             self.tree.focus(selected_iid)
             self.tree.see(selected_iid)
         self.update_count_label()
-        if selected_iid:
+        if self._assessment_package:
             self.after_idle(self.update_selection_summary)
+        self.after_idle(self._refresh_risk_badges)
         if hasattr(self, "popup_summary_var"):
             user_apps = [a for a in self.all_apps if a.get("popup_risk") not in ("SYSTEM", None, "")]
             high = sum(a.get("popup_risk") == "HIGH" for a in user_apps)
