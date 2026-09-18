@@ -82,7 +82,7 @@ jobs:
           Copy-Item "$env:ANDROID_HOME\build-tools\36.0.0\aapt2.exe" package\build-tools\aapt2.exe
           Copy-Item icon-helper-build\icon-helper.jar package\icon-helper.jar
           New-Item -ItemType Directory -Force package\assets | Out-Null
-          Copy-Item assets\tig_red_brand.png package\assets\tig_red_brand.png
+          Copy-Item tig_red_brand.png package\assets\tig_red_brand.png
 
           if (!(Test-Path 'package\platform-tools\adb.exe')) { throw 'adb.exe was not staged' }
           if (!(Test-Path 'package\build-tools\aapt2.exe')) { throw 'aapt2.exe was not staged' }
