@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -822,7 +822,111 @@ def extract_app_icon(apk_path, sha256_hex):
 
 
 
+_ICON_HELPER_READY = set()
+
+def find_icon_helper():
+    candidates = [
+        APP_DIR / "icon-helper.jar",
+        Path(__file__).resolve().parent / "icon-helper.jar",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def pull_device_rendered_icon(serial, app):
+    """Ask Android itself to resolve and rasterize the installed app icon."""
+    package = str(app.get("package") or "").strip()
+    if not package:
+        return ""
+
+    helper = find_icon_helper()
+    if not helper:
+        resolver_log(f"ICON DEVICE {package}: bundled icon-helper.jar missing")
+        return ""
+
+    # Stable cache without pulling the APK. Updating/reinstalling the app changes
+    # version/update identity and therefore creates a fresh cache entry.
+    identity = "|".join([
+        package,
+        str(app.get("version_name") or ""),
+        str(app.get("last_update") or ""),
+    ])
+    cache_key = hashlib.sha256(identity.encode("utf-8", errors="ignore")).hexdigest()
+    cached = icon_cache_path(cache_key)
+    if cached and Path(cached).is_file() and Path(cached).stat().st_size > 100:
+        app["icon_path"] = cached
+        return cached
+
+    remote_jar = "/data/local/tmp/tig-icon-helper.jar"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", package)
+    remote_png = f"/data/local/tmp/tig-icon-{safe}.png"
+    local_tmp = Path(tempfile.gettempdir()) / f"tig_device_icon_{safe}.png"
+
+    try:
+        if serial not in _ICON_HELPER_READY:
+            push = adb_run(["-s", serial, "push", str(helper), remote_jar], timeout=30)
+            if push.returncode != 0:
+                resolver_log(f"ICON DEVICE {package}: helper push failed: {(push.stderr or push.stdout or '').strip()}")
+                return ""
+            _ICON_HELPER_READY.add(serial)
+
+        # app_process runs as the shell user. The helper obtains Android's system
+        # Context and PackageManager, so adaptive/vector icons are rendered by the
+        # same framework that renders them in the launcher.
+        run = adb_run([
+            "-s", serial, "shell",
+            f"CLASSPATH={remote_jar}",
+            "app_process", "/system/bin", "IconFetcher",
+            package, remote_png, "192"
+        ], timeout=20)
+        if run.returncode != 0:
+            resolver_log(f"ICON DEVICE {package}: helper failed: {(run.stderr or run.stdout or '').strip()}")
+            return ""
+
+        pull = adb_run(["-s", serial, "pull", remote_png, str(local_tmp)], timeout=20)
+        if pull.returncode != 0 or not local_tmp.is_file() or local_tmp.stat().st_size <= 100:
+            resolver_log(f"ICON DEVICE {package}: PNG pull failed: {(pull.stderr or pull.stdout or '').strip()}")
+            return ""
+
+        # Validate and normalize before caching.
+        with Image.open(local_tmp) as im:
+            im = im.convert("RGBA")
+            if im.width < 24 or im.height < 24:
+                raise RuntimeError(f"rendered icon too small: {im.size}")
+            target = Path(icon_cache_path(cache_key))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            im.save(target, "PNG")
+
+        app["icon_path"] = str(target)
+        resolver_log(f"ICON DEVICE {package}: success {target.name}")
+        return str(target)
+
+    except Exception as exc:
+        resolver_log(f"ICON DEVICE {package}: {exc!r}")
+        return ""
+    finally:
+        try:
+            local_tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            adb_run(["-s", serial, "shell", "rm", "-f", remote_png], timeout=5)
+        except Exception:
+            pass
+
+
 def pull_apk_icon(serial, app):
+    """Primary: Android framework renderer. Fallback: host-side APK parsing."""
+    icon = pull_device_rendered_icon(serial, app)
+    if icon:
+        return icon
+    resolver_log(f"ICON {app.get('package','')}: device renderer unavailable; trying APK fallback")
+    return pull_apk_icon_fallback(serial, app)
+
+
+def pull_apk_icon_fallback(serial, app):
     """Populate a cached launcher icon for a flagged app.
 
     Modern Play installs are commonly split APKs. Density-specific launcher
