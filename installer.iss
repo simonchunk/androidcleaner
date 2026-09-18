@@ -1,5 +1,7 @@
 #define MyAppName "The iPhone Guy - Android Cleaner"
-#define MyAppVersion "1.1.0"
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by the build workflow
+#endif
 #define MyAppPublisher "The iPhone Guy"
 #define MyAppExeName "AndroidCleaner.exe"
 
