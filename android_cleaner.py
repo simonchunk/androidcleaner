@@ -27,7 +27,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 APP_NAME = "The iPhone Guy - Android Cleaner v1.1.0"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
 ADMIN_PIN_ITERATIONS = 200000
@@ -544,6 +544,39 @@ def extract_app_icon(apk_path, sha256_hex):
         return ""
     target = Path(icon_cache_path(sha256_hex))
 
+    # AAPT2 reported launcher icon is the most authoritative resource. Resolve
+    # the resource name to matching density files in the APK before heuristics.
+    try:
+        aapt2 = find_aapt2()
+        if aapt2:
+            rr = subprocess.run([str(aapt2), "dump", "badging", str(apk_path)],
+                                capture_output=True, text=True, timeout=15,
+                                creationflags=CREATE_NO_WINDOW)
+            badging = (rr.stdout or "") + "\n" + (rr.stderr or "")
+            reported = []
+            for mm in re.finditer(r"application-icon-[^:]+:'([^']+)'", badging):
+                reported.append(mm.group(1))
+            mm = re.search(r"application:.*?icon='([^']+)'", badging)
+            if mm: reported.append(mm.group(1))
+            with zipfile.ZipFile(apk_path, "r") as zf:
+                for resource in reported:
+                    candidates=[n for n in zf.namelist()
+                                if n == resource or n.endswith("/"+Path(resource).name)]
+                    for name in candidates:
+                        if name.lower().endswith((".png",".webp",".jpg",".jpeg")):
+                            try:
+                                with zf.open(name) as fh:
+                                    im=Image.open(fh).convert("RGBA")
+                                    if im.width >= 24 and im.height >= 24:
+                                        im.thumbnail((96,96),Image.Resampling.LANCZOS)
+                                        im.save(target,"PNG")
+                                        resolver_log(f"ICON extracted via AAPT2: {name}")
+                                        return str(target)
+                            except Exception:
+                                continue
+    except Exception as exc:
+        resolver_log(f"ICON AAPT2 badging fallback failed: {exc!r}")
+
     # Fast archive fallback: many APKs expose launcher PNG/WebP resources even
     # when compiled adaptive-icon XML cannot be decoded cleanly.
     try:
@@ -784,6 +817,7 @@ def extract_app_icon(apk_path, sha256_hex):
     except Exception as exc:
         resolver_log(f"ICON extraction failed: {exc!r}")
 
+    resolver_log(f"ICON no usable launcher image in {Path(apk_path).name}")
     return ""
 
 
@@ -823,6 +857,16 @@ def pull_apk_icon(serial, app):
         # Prefer base.apk.
         remote = next((x for x in paths if x.endswith("/base.apk")), paths[0] if paths else "")
         if not remote:
+            try:
+                ds = adb_run(["-s", serial, "shell", "dumpsys", "package", package], timeout=15)
+                mm = re.search(r"(?:sourceDir|codePath)=([^\\r\\n ]+)", ds.stdout or "")
+                if mm:
+                    candidate = mm.group(1).strip()
+                    remote = candidate if candidate.endswith(".apk") else candidate.rstrip("/") + "/base.apk"
+            except Exception:
+                pass
+        if not remote:
+            resolver_log(f"ICON {package}: no APK path returned by device")
             return ""
 
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", package)
@@ -2910,11 +2954,50 @@ class Cleaner(ctk.CTk):
             return "Light"
         return "Dark" if self._windows_dark_mode() else "Light"
 
+    def _apply_tree_palette(self):
+        if not hasattr(self, "tree"):
+            return
+        dark = ctk.get_appearance_mode() == "Dark"
+        style = ttk.Style(self)
+        if dark:
+            bg, fg, head, sel = "#0d1e2e", "#f4f7fb", "#102438", "#164d82"
+            crit, high, check, prot = "#2c1820", "#261f17", "#222216", "#0a1722"
+        else:
+            bg, fg, head, sel = "#ffffff", "#142536", "#eef3f8", "#d7eaff"
+            crit, high, check, prot = "#fff0f2", "#fff6e8", "#fffbe8", "#f2f5f8"
+        style.configure("Modern.Treeview", background=bg, fieldbackground=bg,
+                        foreground=fg, rowheight=64, borderwidth=0,
+                        font=("Segoe UI",10))
+        style.map("Modern.Treeview", background=[("selected",sel)],
+                  foreground=[("selected",fg)])
+        style.configure("Modern.Treeview.Heading", background=head, foreground=fg,
+                        relief="flat", padding=(8,10), font=("Segoe UI Semibold",10))
+        self.tree.tag_configure("critical",background=crit,foreground=fg)
+        self.tree.tag_configure("high",background=high,foreground=fg)
+        self.tree.tag_configure("check",background=check,foreground=fg)
+        self.tree.tag_configure("protected",background=prot,foreground="#708396")
+        self.tree.tag_configure("baseline",foreground="#708396")
+
+    def _scan_ui(self, active, message="Scanning connected phone…"):
+        if not hasattr(self, "scan_overlay"):
+            return
+        if active:
+            self.scan_message_var.set(message)
+            self.scan_overlay.place(relx=0.5, rely=0.5, anchor="center")
+            self.scan_overlay.lift()
+            self.scan_progress.start()
+            if hasattr(self,"bottom_status_var"): self.bottom_status_var.set(message)
+        else:
+            self.scan_progress.stop()
+            self.scan_overlay.place_forget()
+            if hasattr(self,"bottom_status_var"): self.bottom_status_var.set("Ready")
+
     def apply_theme(self):
         mode = self.effective_theme()
         ctk.set_appearance_mode(mode.lower())
         if hasattr(self, "theme_button"):
             self.theme_button.configure(text=("☾" if mode == "Dark" else "☀"))
+        self._apply_tree_palette()
 
     def set_appearance(self, mode):
         if mode not in ("Light", "Dark", "Follow Windows"):
@@ -2943,6 +3026,7 @@ class Cleaner(ctk.CTk):
         ctk.set_appearance_mode(target.lower())
         if hasattr(self, "theme_button"):
             self.theme_button.configure(text=("☾" if target == "Dark" else "☀"))
+        self._apply_tree_palette()
 
     def build(self):
         ctk.set_appearance_mode("dark" if self.effective_theme() == "Dark" else "light")
@@ -3120,6 +3204,17 @@ class Cleaner(ctk.CTk):
         self.tree.tag_configure("protected",background="#0a1722",foreground="#627487")
         self.icon_images={}
 
+        # Clear active scanning state: staff can see that work is happening.
+        self.scan_overlay=ctk.CTkFrame(left,fg_color=C["card"],corner_radius=14,
+                                       border_width=1,border_color=C["line"],width=360,height=150)
+        self.scan_message_var=tk.StringVar(value="Scanning connected phone…")
+        ctk.CTkLabel(self.scan_overlay,text="Scanning phone",font=("Segoe UI",18,"bold"),
+                     text_color=C["text"]).pack(padx=28,pady=(24,4))
+        ctk.CTkLabel(self.scan_overlay,textvariable=self.scan_message_var,text_color=C["muted"],
+                     font=("Segoe UI",11)).pack(padx=28,pady=(0,14))
+        self.scan_progress=ctk.CTkProgressBar(self.scan_overlay,width=280,height=8,mode="indeterminate")
+        self.scan_progress.pack(padx=28,pady=(0,24))
+
         # ASSESSMENT CARD
         right=ctk.CTkFrame(main,fg_color=C["card"],corner_radius=12,border_width=1,border_color=C["line"])
         right.grid(row=0,column=1,sticky="nsew",padx=(8,0))
@@ -3169,6 +3264,7 @@ class Cleaner(ctk.CTk):
         ctk.CTkLabel(footer,text="Icon cache enabled",text_color=C["muted"],font=("Segoe UI",10)).pack(side="right",padx=24)
         self.icon_status_var=tk.StringVar(value="Icons: waiting")
         ctk.CTkLabel(footer,textvariable=self.icon_status_var,text_color=C["muted"],font=("Segoe UI",10)).pack(side="right")
+        self._apply_tree_palette()
 
     def set_view(self, mode):
         self.view_var.set(mode)
@@ -3639,6 +3735,7 @@ class Cleaner(ctk.CTk):
         return None
 
     def scan(self):
+        self._scan_ui(True, "Reading installed apps and device diagnostics…")
         serial = self.serial()
         if not serial:
             messagebox.showwarning(
