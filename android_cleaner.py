@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
