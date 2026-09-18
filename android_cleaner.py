@@ -26,7 +26,7 @@ from PIL import Image, ImageTk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -4249,20 +4249,69 @@ class Cleaner(ctk.CTk):
             resolver_log(f"ICON UI load failed {path}: {exc!r}")
             return ""
 
+    def _icon_candidate_signature(self):
+        serial = self.current_serial()
+        if not serial or not self.all_apps:
+            return None
+        candidates = [
+            a for a in self.all_apps
+            if a.get("priority") in ("CRITICAL", "HIGH", "CHECK")
+            and not self._is_protected_app(a)
+        ]
+        if not candidates:
+            return (serial, ())
+        return (
+            serial,
+            tuple(sorted(
+                (str(a.get("package") or ""), str(a.get("priority") or ""))
+                for a in candidates
+            ))
+        )
+
+    def _ensure_icon_pipeline_after_view(self):
+        """Guaranteed UI-side trigger after suspicious rows have been painted."""
+        sig = self._icon_candidate_signature()
+        if not sig:
+            return
+        if getattr(self, "_icon_pipeline_running", False):
+            return
+        if sig == getattr(self, "_icon_pipeline_completed_signature", None):
+            return
+        resolver_log(
+            f"ICON UI TRIGGER serial={sig[0]} candidates={len(sig[1])}: "
+            f"table rendered; starting icon pipeline"
+        )
+        self.start_background_icon_discovery()
+
     def start_background_icon_discovery(self):
         """Resolve icons only for apps the technician is being asked to inspect."""
         serial = self.current_serial()
         if not serial or not self.all_apps:
+            resolver_log("ICON PIPELINE SKIP: no current serial or no scanned apps")
             return
-        token = getattr(self, "_icon_generation", 0) + 1
-        self._icon_generation = token
+        if getattr(self, "_icon_pipeline_running", False):
+            resolver_log(f"ICON PIPELINE SKIP serial={serial}: worker already running")
+            return
+
         work = [
             a for a in self.all_apps
             if a.get("priority") in ("CRITICAL", "HIGH", "CHECK")
             and not self._is_protected_app(a)
         ]
         work.sort(key=lambda a: {"CRITICAL":0,"HIGH":1,"CHECK":2}.get(a.get("priority"),3))
+        signature = (
+            serial,
+            tuple(sorted(
+                (str(a.get("package") or ""), str(a.get("priority") or ""))
+                for a in work
+            ))
+        )
         total = len(work)
+
+        self._icon_pipeline_running = True
+        token = getattr(self, "_icon_generation", 0) + 1
+        self._icon_generation = token
+
         resolver_log(
             f"ICON PIPELINE START serial={serial} generation={token} "
             f"candidates={total} packages=" +
@@ -4270,39 +4319,69 @@ class Cleaner(ctk.CTk):
         )
         if hasattr(self, "icon_status_var"):
             self.icon_status_var.set(f"Icons: 0/{total} loaded")
+
         if not work:
+            self._icon_pipeline_running = False
+            self._icon_pipeline_completed_signature = signature
             resolver_log(f"ICON PIPELINE FINISH serial={serial}: no suspicious/review candidates")
             return
 
         def worker():
             done = 0
             attempted = 0
-            for app in work:
-                if token != getattr(self, "_icon_generation", None) or serial != self.current_serial():
-                    resolver_log(f"ICON PIPELINE CANCEL serial={serial} generation={token}: device/generation changed")
-                    return
-                package = str(app.get("package") or "")
-                existing = str(app.get("icon_path") or "")
-                if existing and Path(existing).is_file() and Path(existing).stat().st_size > 100:
-                    done += 1
-                    resolver_log(f"ICON PIPELINE CACHE {package}: {existing}")
-                else:
-                    attempted += 1
-                    resolver_log(f"ICON PIPELINE QUEUE {attempted}/{total} {package}: invoking device renderer")
-                    icon = pull_apk_icon(serial, app)
-                    if icon:
+            completed_normally = False
+            try:
+                for app in work:
+                    if token != getattr(self, "_icon_generation", None) or serial != self.current_serial():
+                        resolver_log(
+                            f"ICON PIPELINE CANCEL serial={serial} generation={token}: "
+                            "device/generation changed"
+                        )
+                        return
+                    package = str(app.get("package") or "")
+                    existing = str(app.get("icon_path") or "")
+                    if existing and Path(existing).is_file() and Path(existing).stat().st_size > 100:
                         done += 1
-                        resolver_log(f"ICON PIPELINE RESULT {package}: loaded {icon}")
+                        resolver_log(f"ICON PIPELINE CACHE {package}: {existing}")
                     else:
-                        resolver_log(f"ICON PIPELINE RESULT {package}: no icon")
-                if hasattr(self, "icon_status_var"):
-                    self.after(0, lambda d=done,t=total:self.icon_status_var.set(f"Icons: {d}/{t} loaded"))
-                self.after(0, self.apply_view)
-            resolver_log(
-                f"ICON PIPELINE FINISH serial={serial} generation={token}: "
-                f"loaded={done}/{total} attempted={attempted}"
-            )
-        threading.Thread(target=worker, daemon=True, name=f"icon-pipeline-{token}").start()
+                        attempted += 1
+                        resolver_log(
+                            f"ICON PIPELINE QUEUE {attempted}/{total} {package}: "
+                            "invoking Android device renderer"
+                        )
+                        icon = pull_apk_icon(serial, app)
+                        if icon:
+                            done += 1
+                            resolver_log(f"ICON PIPELINE RESULT {package}: loaded {icon}")
+                        else:
+                            resolver_log(f"ICON PIPELINE RESULT {package}: no icon")
+                    if hasattr(self, "icon_status_var"):
+                        self.after(
+                            0,
+                            lambda d=done,t=total:
+                                self.icon_status_var.set(f"Icons: {d}/{t} loaded")
+                        )
+                    # Repaint only. The running guard prevents this repaint from
+                    # spawning another icon worker.
+                    self.after(0, self.apply_view)
+                completed_normally = True
+                resolver_log(
+                    f"ICON PIPELINE FINISH serial={serial} generation={token}: "
+                    f"loaded={done}/{total} attempted={attempted}"
+                )
+            except Exception as exc:
+                resolver_log(
+                    f"ICON PIPELINE ERROR serial={serial} generation={token}: {exc!r}"
+                )
+            finally:
+                self._icon_pipeline_running = False
+                if completed_normally:
+                    self._icon_pipeline_completed_signature = signature
+
+        threading.Thread(
+            target=worker, daemon=True, name=f"icon-pipeline-{token}"
+        ).start()
+
 
     def _is_protected_app(self, app):
         t = str(app.get("app_type") or app.get("type") or "").upper().strip()
@@ -4458,6 +4537,11 @@ class Cleaner(ctk.CTk):
                 f"{games} game{'s' if games != 1 else ''}. Click a row for details."
             )
 
+
+        # The table render is the guaranteed point where triage results exist.
+        # Queue the icon pipeline from the Tk/UI thread instead of depending on
+        # resolver or scan-worker callbacks.
+        self.after_idle(self._ensure_icon_pipeline_after_view)
 
     def toggle_cross_pc_test_mode(self):
         global DB_PATH, CROSS_PC_TEST_MODE
