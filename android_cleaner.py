@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.18"
+APP_VERSION = "1.2.19"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2804,7 +2804,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.18 Structural UI Fix loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.19 Deployment Candidate Layout Polish loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -3430,10 +3430,14 @@ class Cleaner(ctk.CTk):
                 "package":250,"reputation":130,"status":100,"identity":80,"version":90,"updated":145,
                 "special":180,"online":175,"popup":120,"reason":280}
         for c in cols:
-            self.tree.heading(c,text=heads[c],command=lambda col=c:self.sort_by(col,False))
-            self.tree.column(c,width=widths[c],anchor="w")
+            self.tree.heading(
+                c, text=heads[c], anchor="center",
+                command=lambda col=c:self.sort_by(col,False)
+            )
+            data_anchor = "w" if c == "app" else "center"
+            self.tree.column(c,width=widths[c],anchor=data_anchor)
         self.tree.heading("#0",text="")
-        self.tree.column("#0",width=88,minwidth=88,stretch=False,anchor="center")
+        self.tree.column("#0",width=106,minwidth=106,stretch=False,anchor="center")
         self.tree.column("checked",width=0,minwidth=0,stretch=False,anchor="center")
         self.tree["displaycolumns"]=("app","priority","app_type","installer","installed")
         ys=ctk.CTkScrollbar(table,orientation="vertical",command=self._tree_yview,
@@ -4455,11 +4459,11 @@ class Cleaner(ctk.CTk):
         pkg = str(app.get("package") or "")
         protected = self._is_protected_app(app)
         checked = pkg in self.checked_packages
-        cache_key = ("row-composite", path, pkg, checked, protected, 82, 52)
+        cache_key = ("row-composite", path, pkg, checked, protected, 100, 52)
         if cache_key in self.icon_images:
             return self.icon_images[cache_key]
 
-        canvas = Image.new("RGBA", (82,52), (0,0,0,0))
+        canvas = Image.new("RGBA", (100,52), (0,0,0,0))
         draw = ImageDraw.Draw(canvas)
 
         # Android application icon.
@@ -4475,17 +4479,17 @@ class Cleaner(ctk.CTk):
                 resolver_log(f"ICON UI load failed {path}: {exc!r}")
 
         # Crisp app-selection control at the right of the icon.
-        x0,y0,x1,y1=60,17,76,33
+        x0,y0,x1,y1=65,17,81,33
         if protected:
             # Small lock drawn by us; no emoji/font fallback.
-            draw.rounded_rectangle((61,21,75,34),radius=3,fill="#203747",outline="#627487",width=2)
-            draw.arc((64,13,72,25),180,360,fill="#7e94a7",width=2)
+            draw.rounded_rectangle((66,21,80,34),radius=3,fill="#203747",outline="#627487",width=2)
+            draw.arc((69,13,77,25),180,360,fill="#7e94a7",width=2)
         else:
             outline="#46b7ff" if checked else "#9ab0c2"
             fill="#168df2" if checked else "#10283b"
             draw.rounded_rectangle((x0,y0,x1,y1),radius=3,fill=fill,outline=outline,width=2)
             if checked:
-                draw.line((63,25,67,29,74,20),fill="#ffffff",width=2,joint="curve")
+                draw.line((68,25,72,29,79,20),fill="#ffffff",width=2,joint="curve")
 
         photo=ImageTk.PhotoImage(canvas)
         self.icon_images[cache_key]=photo
