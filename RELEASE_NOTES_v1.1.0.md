@@ -24,3 +24,12 @@
 - Retains raster-icon fallback and the 40 px row / 30 px icon layout.
 - Unsupported vector-only layers fail safely with a blank icon and resolver-log entry.
 - Local test only; do not publish this build as a GitHub Release yet.
+
+## Local UI/diagnostics iteration
+- Adds a separate progressive background icon pass for the full app inventory, rather than only apps selected for label resolution.
+- User apps are prioritised before protected system/OEM apps; icons remain cached by APK hash.
+- SYSTEM / OEM and UPDATED SYSTEM apps are visually subdued and explicitly protected from removal.
+- App Assessment identifies protected system apps.
+- Adds Appearance modes: Light, Dark and Follow Windows, persisted per workstation.
+- Dark mode uses dark risk colours while retaining CRITICAL/HIGH/CHECK distinction.
+- Local test only — do not publish this build as a GitHub Release yet.

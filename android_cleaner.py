@@ -754,6 +754,68 @@ def extract_app_icon(apk_path, sha256_hex):
     return ""
 
 
+
+def pull_apk_icon(serial, app):
+    """Populate a cached icon without changing app identity/reputation.
+
+    Runs independently of label discovery so ordinary All Apps rows can gain
+    icons progressively in the background.
+    """
+    package = str(app.get("package") or "").strip()
+    if not package:
+        return ""
+    existing = str(app.get("icon_path") or "")
+    if existing and Path(existing).is_file():
+        return existing
+
+    adb = find_adb()
+    if not adb:
+        return ""
+
+    try:
+        # Reuse an already-known hash/cache when possible.
+        sha = str(app.get("sha256") or "").strip()
+        if sha:
+            cached = icon_cache_path(sha)
+            if cached and Path(cached).is_file():
+                return cached
+
+        r = adb_run(["-s", serial, "shell", "pm", "path", package], timeout=12)
+        paths = []
+        for line in (r.stdout or "").splitlines():
+            line = line.strip()
+            if line.startswith("package:"):
+                paths.append(line[8:].strip())
+        # Prefer base.apk.
+        remote = next((x for x in paths if x.endswith("/base.apk")), paths[0] if paths else "")
+        if not remote:
+            return ""
+
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", package)
+        local = Path(tempfile.gettempdir()) / f"tig_icon_{safe}.apk"
+        pr = adb_run(["-s", serial, "pull", remote, str(local)], timeout=45)
+        if pr.returncode != 0 or not local.is_file() or local.stat().st_size <= 0:
+            return ""
+
+        h = hashlib.sha256()
+        with open(local, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        sha = h.hexdigest()
+        app["sha256"] = sha
+        icon = extract_app_icon(local, sha)
+        if icon:
+            app["icon_path"] = icon
+        try:
+            local.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return icon
+    except Exception as exc:
+        resolver_log(f"ICON background {package}: {exc!r}")
+        return ""
+
+
 def pull_apk_identity(serial, app):
     package = app["package"]
     resolver_log(f"IDENTITY {package}: locating APK path")
@@ -2452,6 +2514,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(tk.Tk):
     def __init__(self):
+        self.appearance_mode = str(load_config().get("appearance", "Follow Windows"))
         self.checked_packages = set()
         super().__init__()
         self.title(APP_NAME)
@@ -2496,6 +2559,7 @@ class Cleaner(tk.Tk):
         if shared_configured():
             self.after(700, lambda: self.production_sync("startup"))
         self.after(1800, self.check_for_updates)
+        self.after(50, self.apply_theme)
 
     def _startup_shared_sync(self):
         self.production_sync("startup")
@@ -2790,6 +2854,82 @@ class Cleaner(tk.Tk):
         menu.add_command(label="Export Knowledge DB", command=self.export_knowledge_db_ui)
         menu.add_command(label="Import Knowledge DB", command=self.import_knowledge_db_ui)
 
+    def _windows_dark_mode(self):
+        if os.name != "nt":
+            return False
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            ) as key:
+                value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                return int(value) == 0
+        except Exception:
+            return False
+
+    def effective_theme(self):
+        choice = str(getattr(self, "appearance_mode", "Follow Windows") or "Follow Windows")
+        if choice == "Dark":
+            return "Dark"
+        if choice == "Light":
+            return "Light"
+        return "Dark" if self._windows_dark_mode() else "Light"
+
+    def apply_theme(self):
+        dark = self.effective_theme() == "Dark"
+        bg = "#202124" if dark else "#f0f0f0"
+        panel = "#292a2d" if dark else "#ffffff"
+        fg = "#e8eaed" if dark else "#111111"
+        muted = "#9aa0a6" if dark else "#777777"
+        select = "#3c4043" if dark else "#cfe8ff"
+
+        try:
+            self.configure(bg=bg)
+        except Exception:
+            pass
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure(".", background=bg, foreground=fg)
+        style.configure("TFrame", background=bg)
+        style.configure("TLabel", background=bg, foreground=fg)
+        style.configure("TLabelframe", background=bg, foreground=fg)
+        style.configure("TLabelframe.Label", background=bg, foreground=fg)
+        style.configure("TButton", background=bg, foreground=fg)
+        style.configure("TCheckbutton", background=bg, foreground=fg)
+        style.configure("TRadiobutton", background=bg, foreground=fg)
+        style.configure("TCombobox", fieldbackground=panel, background=bg, foreground=fg)
+        style.configure("Treeview", background=panel, fieldbackground=panel, foreground=fg, rowheight=40)
+        style.map("Treeview", background=[("selected", select)], foreground=[("selected", fg)])
+        style.configure("Treeview.Heading", background=bg, foreground=fg)
+
+        # Risk colours remain semantically distinct in both modes.
+        if hasattr(self, "tree"):
+            if dark:
+                self.tree.tag_configure("critical", background="#5a2528", foreground="#ffffff")
+                self.tree.tag_configure("high", background="#5a4525", foreground="#ffffff")
+                self.tree.tag_configure("check", background="#4d4823", foreground="#ffffff")
+                self.tree.tag_configure("protected", background="#252629", foreground="#777b80")
+                self.tree.tag_configure("baseline", foreground=muted)
+            else:
+                self.tree.tag_configure("protected", foreground="#8a8a8a")
+                self.tree.tag_configure("baseline", foreground="#777777")
+
+    def set_appearance(self, mode):
+        if mode not in ("Light", "Dark", "Follow Windows"):
+            return
+        self.appearance_mode = mode
+        try:
+            cfg = load_config()
+            cfg["appearance"] = mode
+            save_config(cfg)
+        except Exception:
+            pass
+        self.apply_theme()
+
     def build(self):
         # v0.11: workshop-first interface. The scan engine is unchanged; the
         # everyday screen now shows only what a technician needs to make a decision.
@@ -2891,6 +3031,7 @@ class Cleaner(tk.Tk):
         self.tree.tag_configure("high", background="#ffe7c2")
         self.tree.tag_configure("check", background="#fff7c7")
         self.tree.tag_configure("baseline", foreground="#777777")
+        self.tree.tag_configure("protected", foreground="#8a8a8a")
         self.icon_images = {}
 
         # Selected-app details live in their own bounded row.  Keeping this
@@ -3003,6 +3144,8 @@ class Cleaner(tk.Tk):
         reasons=[x.strip() for x in (a.get("reason") or "").split("•") if x.strip()]
         if reasons:
             details.append("Why flagged: "+" • ".join(reasons[:4])+(" • …" if len(reasons)>4 else ""))
+        if self._is_protected_app(a):
+            details.insert(0, "🔒 PROTECTED SYSTEM APP — removal disabled")
         self.intel_reason_var.set("   •   ".join(details))
 
     def show_how_to_connect(self):
@@ -3729,6 +3872,47 @@ class Cleaner(tk.Tk):
             resolver_log(f"ICON UI load failed {path}: {exc!r}")
             return ""
 
+    def start_background_icon_discovery(self):
+        """Progressively populate icons after the normal scan has rendered."""
+        serial = self.current_serial()
+        if not serial or not self.apps:
+            return
+        token = getattr(self, "_icon_generation", 0) + 1
+        self._icon_generation = token
+
+        # User apps first because they are the most useful visually. System/OEM
+        # apps follow afterwards and benefit from the same cache on future scans.
+        work = list(self.apps)
+        work.sort(key=lambda a: (
+            1 if str(a.get("app_type") or a.get("type") or "").upper() in
+                 ("SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM") else 0,
+            str(a.get("label") or a.get("package") or "").lower()
+        ))
+
+        def worker():
+            changed = 0
+            for app in work:
+                if token != getattr(self, "_icon_generation", None):
+                    return
+                if serial != self.current_serial():
+                    return
+                if app.get("icon_path") and Path(str(app["icon_path"])).is_file():
+                    continue
+                icon = pull_apk_icon(serial, app)
+                if icon:
+                    changed += 1
+                    # Refresh periodically rather than repainting 500+ times.
+                    if changed % 5 == 0:
+                        self.after(0, self.apply_view)
+            if token == getattr(self, "_icon_generation", None):
+                self.after(0, self.apply_view)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _is_protected_app(self, app):
+        t = str(app.get("app_type") or app.get("type") or "").upper().strip()
+        return t in ("SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM")
+
     def apply_view(self):
         mode = self.view_var.get()
         if hasattr(self, "view_label_var"):
@@ -3836,6 +4020,9 @@ class Cleaner(tk.Tk):
 
         for app in apps:
             tag = app["priority"].lower()
+            if self._is_protected_app(app):
+                tag = "protected"
+                app["checked"] = False
             iid = self.tree.insert(
                 "", "end",
                 image=self._tree_icon_for_app(app),
