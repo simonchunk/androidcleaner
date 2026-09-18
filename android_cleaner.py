@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.16"
+APP_VERSION = "1.2.17"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2804,7 +2804,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.16 Assessment Badges Brand Fix loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.17 UI Finishing loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -3354,12 +3354,21 @@ class Cleaner(ctk.CTk):
         )
         self.rescan_button.pack(side="right", padx=10)
         self.onset_var = getattr(self, "onset_var", tk.StringVar(value="Unknown"))
-        onset = ctk.CTkComboBox(nav, variable=self.onset_var, values=ONSET_OPTIONS,
-                                width=170, height=40, corner_radius=9, fg_color=C["card2"],
-                                border_color=C["line"], button_color=C["card2"],
-                                dropdown_fg_color=C["card"], command=lambda _v:self.retriage())
-        onset.pack(side="right", padx=8)
-        ctk.CTkLabel(nav, text="Problem started:", text_color=C["text"]).pack(side="right", padx=(10,0))
+        onset_group=ctk.CTkFrame(nav,fg_color="transparent")
+        onset_group.pack(side="right",padx=(10,8),pady=3)
+        ctk.CTkLabel(onset_group,text="Problem started",text_color=C["muted"],
+                     font=("Segoe UI",9,"bold")).pack(anchor="w",padx=2,pady=(0,2))
+        onset = ctk.CTkComboBox(
+            onset_group, variable=self.onset_var, values=ONSET_OPTIONS,
+            width=190, height=38, corner_radius=9,
+            fg_color="#102b40", border_width=1, border_color="#2b5878",
+            button_color="#173b57", button_hover_color="#205477",
+            dropdown_fg_color="#102b40", dropdown_hover_color="#1b4968",
+            text_color=C["text"], dropdown_text_color=C["text"],
+            font=("Segoe UI",10), dropdown_font=("Segoe UI",10),
+            command=lambda _v:self.retriage()
+        )
+        onset.pack()
 
         # Context
         context = ctk.CTkFrame(root, fg_color="transparent")
@@ -3435,8 +3444,8 @@ class Cleaner(ctk.CTk):
         ys.pack(side="right",fill="y",padx=(4,0))
         self.tree.bind("<Button-1>",self.on_tree_click,add="+")
         self.tree.bind("<<TreeviewSelect>>",lambda e:self.update_selection_summary())
-        self.tree.bind("<MouseWheel>",lambda e:self.after_idle(self._refresh_risk_badges),add="+")
-        self.tree.bind("<Configure>",lambda e:self.after_idle(self._refresh_risk_badges),add="+")
+        self.tree.bind("<MouseWheel>",lambda e:(self.after_idle(self._refresh_risk_badges),self.after_idle(self._refresh_checkbox_widgets)),add="+")
+        self.tree.bind("<Configure>",lambda e:(self.after_idle(self._refresh_risk_badges),self.after_idle(self._refresh_checkbox_widgets)),add="+")
         self.tree.tag_configure("critical",background="#35131d",foreground="#ffffff")
         self.tree.tag_configure("high",background="#2b2114",foreground="#ffffff")
         self.tree.tag_configure("check",background="#252414",foreground="#ffffff")
@@ -3465,6 +3474,8 @@ class Cleaner(ctk.CTk):
         self.intel_title_var=tk.StringVar(value="")
         self.intel_history_var=tk.StringVar(value="")
         self.intel_reason_var=tk.StringVar(value="")
+        self.assessment_name_var=tk.StringVar(value="")
+        self.assessment_rep_var=tk.StringVar(value="UNKNOWN")
         self.assessment_icon_image = None
 
         assess_top = ctk.CTkFrame(right, fg_color="transparent")
@@ -3473,9 +3484,21 @@ class Cleaner(ctk.CTk):
         assess_text.pack(side="left", fill="both", expand=True)
         ctk.CTkLabel(assess_text,text="App assessment",text_color=C["muted"],
                      font=("Segoe UI",11)).pack(anchor="w")
-        ctk.CTkLabel(assess_text,textvariable=self.selection_var,text_color=C["text"],
-                     font=("Segoe UI",18,"bold"),justify="left",anchor="w",
-                     wraplength=300).pack(fill="x",pady=(4,0))
+        ctk.CTkLabel(assess_text,textvariable=self.assessment_name_var,text_color=C["text"],
+                     font=("Segoe UI",17,"bold"),justify="left",anchor="w",
+                     wraplength=300).pack(fill="x",pady=(4,4))
+        badge_row=ctk.CTkFrame(assess_text,fg_color="transparent")
+        badge_row.pack(fill="x",anchor="w")
+        self.assessment_risk_badge=ctk.CTkLabel(
+            badge_row,text="",width=82,height=28,corner_radius=7,
+            fg_color="#34495e",text_color="#ffffff",font=("Segoe UI",11,"bold")
+        )
+        self.assessment_risk_badge.pack(side="left")
+        self.assessment_rep_label=ctk.CTkLabel(
+            badge_row,textvariable=self.assessment_rep_var,text_color=C["muted"],
+            font=("Segoe UI",11,"bold")
+        )
+        self.assessment_rep_label.pack(side="left",padx=(10,0))
 
         self.assessment_icon_frame = ctk.CTkFrame(
             assess_top, width=112, height=112, corner_radius=20,
@@ -3572,11 +3595,19 @@ class Cleaner(ctk.CTk):
         apps = self.action_apps()
         if not apps:
             self.selection_var.set("Select an app to review it.")
+            self.assessment_name_var.set("Select an app to review it.")
+            self.assessment_rep_var.set("")
+            if hasattr(self,"assessment_risk_badge"):
+                self.assessment_risk_badge.configure(text="",fg_color="#24384a")
             self.intel_title_var.set(""); self.intel_history_var.set(""); self.intel_reason_var.set("")
             self._set_assessment_icon(None)
             return
         if len(apps) > 1:
             self.selection_var.set(f"{len(apps)} apps selected")
+            self.assessment_name_var.set(f"{len(apps)} apps selected")
+            self.assessment_rep_var.set("")
+            if hasattr(self,"assessment_risk_badge"):
+                self.assessment_risk_badge.configure(text="MULTI",fg_color="#24679b")
             self.intel_title_var.set("Repair intelligence will be recorded per app; group removals remain group-associated evidence.")
             self.intel_history_var.set(""); self.intel_reason_var.set("")
             self._set_assessment_icon(None)
@@ -3586,6 +3617,21 @@ class Cleaner(ctk.CTk):
         rep=a.get("reputation") or "UNKNOWN"
         priority=a.get("priority") or "INFO"
         self.selection_var.set(f"{name}\n{priority}   •   {rep}")
+        self.assessment_name_var.set(name)
+        self.assessment_rep_var.set(rep)
+        risk_colors={
+            "CRITICAL":"#ef233c",
+            "HIGH":"#f28c00",
+            "CHECK":"#d6a800",
+            "INFO":"#2878ad",
+            "BASELINE":"#40566a",
+        }
+        if hasattr(self,"assessment_risk_badge"):
+            self.assessment_risk_badge.configure(
+                text=priority,
+                fg_color=risk_colors.get(priority,"#40566a"),
+                text_color="#ffffff"
+            )
         self._set_assessment_icon(a)
 
         stats=knowledge_stats(a.get("package")) or {}
@@ -4320,8 +4366,8 @@ class Cleaner(ctk.CTk):
         for iid in self.tree.get_children(""):
             pkg = self.tree.set(iid, "package")
             app = self.rows.get(iid)
-            self.tree.set(iid, "checked", "LOCK" if app and self._is_protected_app(app)
-                          else ("X" if pkg in self.checked_packages else ""))
+            self.tree.set(iid, "checked", "LOCK" if app and self._is_protected_app(app) else "")
+            self.after_idle(self._refresh_checkbox_widgets)
         self.update_count_label()
 
     def on_tree_click(self, event):
@@ -4347,7 +4393,8 @@ class Cleaner(ctk.CTk):
                 self.checked_packages.remove(pkg)
             else:
                 self.checked_packages.add(pkg)
-            self.tree.set(row, "checked", "X" if pkg in self.checked_packages else "")
+            self.tree.set(row, "checked", "")
+            self.after_idle(self._refresh_checkbox_widgets)
             self.update_count_label()
         self.after_idle(self.update_selection_summary)
 
@@ -4541,6 +4588,53 @@ class Cleaner(ctk.CTk):
         t = str(app.get("app_type") or app.get("type") or "").upper().strip()
         return t in ("SYSTEM", "OEM / SYSTEM", "SYSTEM / OEM", "SYSTEM/OEM", "UPDATED SYSTEM")
 
+    def _clear_checkbox_widgets(self):
+        for widget in getattr(self,"_checkbox_widgets",[]):
+            try:
+                widget.destroy()
+            except Exception:
+                pass
+        self._checkbox_widgets=[]
+
+    def _checkbox_widget_click(self, iid):
+        app=self.rows.get(iid)
+        if not app or self._is_protected_app(app):
+            return
+        pkg=app.get("package")
+        if pkg in self.checked_packages:
+            self.checked_packages.remove(pkg)
+        else:
+            self.checked_packages.add(pkg)
+        self.tree.selection_set(iid)
+        self.tree.focus(iid)
+        self._assessment_package=pkg
+        self.update_count_label()
+        self.update_selection_summary()
+        self._refresh_checkbox_widgets()
+
+    def _refresh_checkbox_widgets(self):
+        self._clear_checkbox_widgets()
+        widgets=[]
+        for iid,app in list(getattr(self,"rows",{}).items()):
+            if self._is_protected_app(app):
+                continue
+            box=self.tree.bbox(iid,"checked")
+            if not box:
+                continue
+            x,y,w,h=box
+            selected=app.get("package") in self.checked_packages
+            outer="#38a9ff" if selected else "#7890a4"
+            fill="#168ee0" if selected else "#102536"
+            cb=tk.Canvas(self.tree,width=22,height=22,bg=self.tree.tag_cget(app.get("priority","").lower(),"background") or "#0d1e2e",
+                         highlightthickness=0,bd=0,cursor="hand2")
+            cb.create_rectangle(3,3,19,19,outline=outer,fill=fill,width=2)
+            if selected:
+                cb.create_line(6,11,10,15,17,7,fill="#ffffff",width=2,smooth=True)
+            cb.place(x=x+(w-22)//2,y=y+(h-22)//2,width=22,height=22)
+            cb.bind("<Button-1>",lambda e,row=iid:self._checkbox_widget_click(row))
+            widgets.append(cb)
+        self._checkbox_widgets=widgets
+
     def _clear_risk_badges(self):
         for widget in getattr(self, "_risk_badge_widgets", []):
             try:
@@ -4562,7 +4656,7 @@ class Cleaner(ctk.CTk):
 
     def _refresh_risk_badges(self):
         self._clear_risk_badges()
-        palette={"CRITICAL":("#d92742","#ffffff"),"HIGH":("#d97706","#ffffff"),"CHECK":("#b88a00","#ffffff")}
+        palette={"CRITICAL":("#ef233c","#ffffff"),"HIGH":("#f28c00","#ffffff"),"CHECK":("#d6a800","#ffffff")}
         widgets=[]
         for iid,app in list(getattr(self,"rows",{}).items()):
             risk=str(app.get("priority") or "").upper()
@@ -4585,6 +4679,7 @@ class Cleaner(ctk.CTk):
     def _tree_yview(self, *args):
         self.tree.yview(*args)
         self.after_idle(self._refresh_risk_badges)
+        self.after_idle(self._refresh_checkbox_widgets)
 
     def apply_view(self):
         mode = self.view_var.get()
@@ -4721,7 +4816,7 @@ class Cleaner(ctk.CTk):
                 "", "end",
                 image=self._tree_icon_for_app(app),
                 values=(
-                    ("LOCK" if self._is_protected_app(app) else ("X" if app["package"] in self.checked_packages else "")),
+                    ("LOCK" if self._is_protected_app(app) else ""),
                     app["app_name"],
                     ("" if app.get("priority") in ("CRITICAL","HIGH","CHECK") else app.get("priority","")),
                     app.get("app_type", "UNKNOWN"),
@@ -4755,6 +4850,7 @@ class Cleaner(ctk.CTk):
         if self._assessment_package:
             self.after_idle(self.update_selection_summary)
         self.after_idle(self._refresh_risk_badges)
+        self.after_idle(self._refresh_checkbox_widgets)
         if hasattr(self, "popup_summary_var"):
             user_apps = [a for a in self.all_apps if a.get("popup_risk") not in ("SYSTEM", None, "")]
             high = sum(a.get("popup_risk") == "HIGH" for a in user_apps)
