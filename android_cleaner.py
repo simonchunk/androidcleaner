@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.19"
+APP_VERSION = "1.2.20"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -492,7 +492,9 @@ def run_adb(args, timeout=20):
         capture_output=True, text=True, timeout=timeout,
         creationflags=_flags()
     )
-    return r.returncode, r.stdout.strip(), r.stderr.strip()
+    stdout = r.stdout if isinstance(r.stdout, str) else ""
+    stderr = r.stderr if isinstance(r.stderr, str) else ""
+    return r.returncode, stdout.strip(), stderr.strip()
 
 def adb_run(args, timeout=20):
     """CompletedProcess-compatible wrapper around the app's normal ADB runner."""
@@ -519,7 +521,7 @@ def find_aapt2():
 
 def apk_path_for_package(serial, app):
     package = app["package"]
-    apk_path = app.get("apk_path", "").strip()
+    apk_path = str(app.get("apk_path") or "").strip()
     code_, out, _ = shell(serial, ["pm", "path", package], timeout=20)
     if code_ == 0 and out:
         paths = [
@@ -1819,7 +1821,8 @@ def friendly_device_name(serial):
                 "ro.product.model","ro.product.vendor.model","ro.product.manufacturer"):
         try:
             rc,out,err=run_adb(["-s",serial,"shell","getprop",key],timeout=8)
-            if rc==0 and out.strip(): vals[key]=out.strip()
+            clean=str(out or "").strip()
+            if rc==0 and clean: vals[key]=clean
         except Exception: pass
     friendly=(vals.get("ro.product.marketname") or vals.get("ro.product.vendor.marketname") or
               vals.get("ro.product.odm.marketname") or vals.get("ro.product.model") or
@@ -1849,7 +1852,7 @@ def get_devices():
 
 def get_prop(serial, prop):
     code, out, _ = shell(serial, ["getprop", prop])
-    return out.strip() if code == 0 else ""
+    return str(out or "").strip() if code == 0 else ""
 
 def _package_name_set(serial, flag):
     code, out, _ = shell(
@@ -1887,8 +1890,8 @@ def list_packages_fast(serial):
         package = package.strip()
         result.append({
             "package": package,
-            "apk_path": apk_path.strip(),
-            "installer": installer.strip(),
+            "apk_path": str(apk_path or "").strip(),
+            "installer": str(installer or "").strip(),
             "is_system": package in system_packages,
             "is_third_party": package in third_party_packages,
         })
@@ -1905,7 +1908,7 @@ def list_system_packages_fast(serial):
             continue
         raw=line[len("package:"):]
         apk_path, package = raw.rsplit("=",1) if "=" in raw else ("",raw)
-        pkg=package.strip(); path=apk_path.strip()
+        pkg=str(package or "").strip(); path=str(apk_path or "").strip()
         low=pkg.lower()
         if low == "android" or low.startswith("com.android.") or low.startswith("com.google.android.gms") or low.startswith("com.google.android.gsf"):
             app_type="SYSTEM"
@@ -2044,6 +2047,8 @@ def hibernated_packages(serial, packages, android_version):
             code,out,err=run_adb(["-s",serial,"shell",command], timeout=35)
         except Exception:
             continue
+        out=str(out or "")
+        err=str(err or "")
         text=(out+"\n"+err).lower()
         if "unknown command" in text or "can't find service" in text or "not found" in text:
             continue
@@ -2804,7 +2809,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.19 Deployment Candidate Layout Polish loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.20 None-Safe Scan loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -4109,6 +4114,7 @@ class Cleaner(ctk.CTk):
 
         def worker():
             try:
+                resolver_log(f"SCAN START serial={serial}")
                 man = get_prop(serial, "ro.product.manufacturer")
                 model = get_prop(serial, "ro.product.model")
                 ver = get_prop(serial, "ro.build.version.release")
@@ -4283,9 +4289,12 @@ class Cleaner(ctk.CTk):
                     self.status(f"Scan complete: {len(rows)} apps • 0 worth checking")
 
             except Exception as e:
+                import traceback
+                error_text = str(e)
+                resolver_log("SCAN FAILED\n" + traceback.format_exc())
                 self.after(0, lambda:self._scan_ui(False))
                 self.after(
-                    0, lambda: messagebox.showerror("Scan failed", str(e))
+                    0, lambda: messagebox.showerror("Scan failed", error_text)
                 )
                 self.status("Scan failed")
 
