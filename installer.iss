@@ -41,15 +41,16 @@ Name: "{autodesktop}\Android Cleaner"; Filename: "{app}\{#MyAppExeName}"; Workin
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
 
 [Code]
-procedure CurStepChanged(CurStep: TSetupStep);
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
-  if CurStep = ssInstall then
-  begin
-    { Defensive cleanup for manual installs/upgrades too. The application normally
-      sends adb kill-server before exit, but an older/crashed build may leave it running. }
-    Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM adb.exe >NUL 2>&1', '', SW_HIDE,
-      ewWaitUntilTerminated, ResultCode);
-  end;
+  { Run before Inno begins replacing files.  Restart Manager can close the window
+    without ending an older Cleaner process, so explicitly clear both lock owners. }
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM AndroidCleaner.exe >NUL 2>&1', '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM adb.exe >NUL 2>&1', '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+  Result := '';
 end;

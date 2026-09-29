@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.23"
+APP_VERSION = "1.2.24"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2869,7 +2869,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.23 Unified Onset + ADB Shutdown loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.24 Hard Shutdown Lifecycle loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -2931,9 +2931,33 @@ class Cleaner(ctk.CTk):
         except Exception as e:
             resolver_log("ADB shutdown warning: " + str(e))
 
+    def _force_process_exit(self):
+        """Final shutdown barrier for packaged builds.
+
+        Tk can disappear while a worker/native handle keeps the frozen process alive.
+        At this point settings/DB writes are already synchronous and worker threads are
+        daemon threads, so a hard process exit is preferable to leaving the install
+        directory locked during an upgrade.
+        """
+        try:
+            resolver_log("Android Cleaner process exit")
+        except Exception:
+            pass
+        os._exit(0)
+
     def close_cleanly(self):
+        # Invalidate in-flight scan/icon work first so callbacks cannot repopulate the UI.
+        self._scan_generation += 1
+        self._auto_scan_pending = False
         self._stop_adb_server()
-        self.destroy()
+        try:
+            self.quit()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        finally:
+            self._force_process_exit()
 
     def _startup_shared_sync(self):
         self.production_sync("startup")
@@ -3134,8 +3158,14 @@ class Cleaner(ctk.CTk):
                     # not auto-launch the new EXE; this avoids a transient _MEI/Python DLL
                     # collision seen when upgrading a running one-file build.
                     subprocess.Popen([str(dest)], cwd=str(dest.parent), close_fds=True)
-                    self.destroy()
-                    self.after_idle(lambda: None)
+                    try:
+                        self.quit()
+                    except Exception:
+                        pass
+                    try:
+                        self.destroy()
+                    finally:
+                        self._force_process_exit()
                 except Exception as e:
                     messagebox.showerror("Update", f"Could not start installer: {e}")
         else:
