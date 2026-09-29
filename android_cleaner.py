@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.21"
+APP_VERSION = "1.2.22"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2147,8 +2147,8 @@ def package_display_name(package):
 def installer_name(installer):
     return RECOGNISED_INSTALLERS.get(
         installer,
-        "Sideloaded / unknown"
-        if installer in ("", "null", "none")
+        "Unknown / not reported"
+        if str(installer or "").strip().lower() in ("", "null", "none")
         else installer
     )
 
@@ -2263,10 +2263,10 @@ def classify_app_type(app):
     ):
         return "USER"
 
+    # A missing installer is not evidence of sideloading.  Newer Samsung/Android
+    # builds can omit installer provenance from user-scoped package listings.
+    # Only an explicit Package Installer source is treated as sideload evidence.
     if installer in (
-        "",
-        "null",
-        "none",
         "com.google.android.packageinstaller",
         "com.android.packageinstaller",
         "com.samsung.android.packageinstaller",
@@ -2710,8 +2710,9 @@ def triage_app(app, rep, special, baseline_date, onset_label):
         reasons.append("Can install unknown apps")
 
     # Installation provenance.
+    # Blank/null installer provenance means Android did not report a source; it
+    # must not be promoted to SIDELOADED.  Require explicit Package Installer.
     sideloaded = installer in (
-        "", "null", "none",
         "com.google.android.packageinstaller",
         "com.android.packageinstaller",
         "com.samsung.android.packageinstaller",
@@ -2834,7 +2835,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.21 Current-User Package Scan loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.22 Provenance Hardening loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
