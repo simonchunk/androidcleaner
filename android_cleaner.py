@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.20"
+APP_VERSION = "1.2.21"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -1854,9 +1854,28 @@ def get_prop(serial, prop):
     code, out, _ = shell(serial, ["getprop", prop])
     return str(out or "").strip() if code == 0 else ""
 
-def _package_name_set(serial, flag):
+def current_android_user(serial):
+    """Return the foreground Android user ID that ADB is allowed to inspect.
+
+    Some Samsung devices expose protected profiles (for example Secure Folder)
+    that the shell user is not permitted to enumerate.  Explicitly scoping
+    Package Manager inventory to the foreground user prevents `pm list packages`
+    from crossing into those protected profiles and aborting the whole scan.
+    """
+    try:
+        code, out, err = shell(serial, ["am", "get-current-user"], timeout=10)
+        value = str(out or "").strip()
+        if code == 0 and re.fullmatch(r"\d+", value):
+            return value
+        resolver_log(f"CURRENT USER fallback to 0: rc={code} out={value!r} err={str(err or '')[:200]!r}")
+    except Exception as exc:
+        resolver_log(f"CURRENT USER fallback to 0: {exc}")
+    return "0"
+
+def _package_name_set(serial, flag, user_id=None):
+    user_id = str(user_id if user_id is not None else current_android_user(serial))
     code, out, _ = shell(
-        serial, ["pm", "list", "packages", flag], timeout=40
+        serial, ["pm", "list", "packages", "--user", user_id, flag], timeout=40
     )
     if code:
         return set()
@@ -1868,15 +1887,19 @@ def _package_name_set(serial, flag):
 
 
 def list_packages_fast(serial):
-    # Complete installed-package inventory. Views decide what the technician sees.
+    # Complete package inventory for the foreground/owner-visible Android user.
+    # Protected Samsung/work profiles can reject shell access; never let an
+    # inaccessible secondary profile abort the customer's entire scan.
+    user_id = current_android_user(serial)
+    resolver_log(f"PACKAGE INVENTORY scoped to Android user {user_id}")
     code, out, err = shell(
-        serial, ["pm", "list", "packages", "-i", "-f"], timeout=60
+        serial, ["pm", "list", "packages", "--user", user_id, "-i", "-f"], timeout=60
     )
     if code:
         raise RuntimeError(err or out)
 
-    system_packages = _package_name_set(serial, "-s")
-    third_party_packages = _package_name_set(serial, "-3")
+    system_packages = _package_name_set(serial, "-s", user_id)
+    third_party_packages = _package_name_set(serial, "-3", user_id)
 
     result = []
     for line in out.splitlines():
@@ -1898,8 +1921,9 @@ def list_packages_fast(serial):
     return result
 
 def list_system_packages_fast(serial):
-    """Silent system inventory. Android pm -s is the source of truth for system status."""
-    code, out, err = shell(serial, ["pm", "list", "packages", "-s", "-f"], timeout=40)
+    """Silent system inventory for the foreground Android user."""
+    user_id = current_android_user(serial)
+    code, out, err = shell(serial, ["pm", "list", "packages", "--user", user_id, "-s", "-f"], timeout=40)
     if code:
         raise RuntimeError(err or out)
     result=[]
@@ -2017,9 +2041,10 @@ def package_details(serial, package):
     return d
 
 def disabled_packages(serial):
-    """Return packages Android currently reports disabled for the current user."""
+    """Return packages Android reports disabled for the foreground user."""
     try:
-        code, out, _ = shell(serial, ["pm", "list", "packages", "-d"], timeout=20)
+        user_id = current_android_user(serial)
+        code, out, _ = shell(serial, ["pm", "list", "packages", "--user", user_id, "-d"], timeout=20)
         if code:
             return set()
         return {line.split("package:",1)[1].strip() for line in out.splitlines()
@@ -2809,7 +2834,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.20 None-Safe Scan loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.21 Current-User Package Scan loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
