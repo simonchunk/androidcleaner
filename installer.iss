@@ -39,3 +39,17 @@ Name: "{autodesktop}\Android Cleaner"; Filename: "{app}\{#MyAppExeName}"; Workin
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssInstall then
+  begin
+    { Defensive cleanup for manual installs/upgrades too. The application normally
+      sends adb kill-server before exit, but an older/crashed build may leave it running. }
+    Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM adb.exe >NUL 2>&1', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  end;
+end;

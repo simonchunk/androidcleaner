@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.22"
+APP_VERSION = "1.2.23"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2533,6 +2533,40 @@ def is_cleanup_candidate(app, onset_label="Unknown"):
     return False
 
 
+_PRIORITY_RANK = {"BASELINE": 0, "INFO": 1, "CHECK": 2, "HIGH": 3, "CRITICAL": 4}
+
+def triage_for_selected_onset(app, rep, special, baseline_date, onset_label):
+    """Triage for the UI without making staff cycle every onset option.
+
+    When Problem started is Unknown, preserve the ordinary Unknown result but also
+    evaluate the named onset windows. If one of those windows would surface the app
+    more strongly, show that stronger result now and annotate which window caused it.
+    This makes Unknown the broad discovery view; selecting a real onset then narrows
+    the timing correlation rather than being required to discover candidates.
+    """
+    priority, score, reasons = triage_app(app, rep, special, baseline_date, onset_label)
+    cleanup = is_cleanup_candidate({**app, "priority": priority, "reason": " • ".join(reasons)}, onset_label)
+    if onset_label != "Unknown":
+        return priority, score, reasons, cleanup
+
+    best = (priority, score, reasons, cleanup, "Unknown")
+    for candidate_onset in ONSET_OPTIONS:
+        if candidate_onset == "Unknown":
+            continue
+        p2, s2, r2 = triage_app(app, rep, special, baseline_date, candidate_onset)
+        probe = {**app, "priority": p2, "reason": " • ".join(r2)}
+        c2 = is_cleanup_candidate(probe, candidate_onset)
+        key2 = (_PRIORITY_RANK.get(p2, 0), int(c2), s2)
+        keybest = (_PRIORITY_RANK.get(best[0], 0), int(best[3]), best[1])
+        if key2 > keybest:
+            best = (p2, s2, r2, c2, candidate_onset)
+
+    bp, bs, br, bc, bonset = best
+    if bonset != "Unknown":
+        br = list(br) + [f"Potential timing match: {bonset} (Problem started is unknown)"]
+    return bp, bs, br, bc
+
+
 def popup_ad_assessment(app, special):
     """Assess *meaningful* popup-ad capability; this is not a malware verdict.
 
@@ -2835,7 +2869,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.22 Provenance Hardening loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.23 Unified Onset + ADB Shutdown loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -2876,6 +2910,7 @@ class Cleaner(ctk.CTk):
         self.onset_var = tk.StringVar(value="Unknown")
 
         self.build()
+        self.protocol("WM_DELETE_WINDOW", self.close_cleanly)
         self.after(100, self.ensure_first_run_configuration)
         self.after(350, self.refresh_devices)
         self.after(2500, self._device_poll)
@@ -2883,6 +2918,22 @@ class Cleaner(ctk.CTk):
             self.after(700, lambda: self.production_sync("startup"))
         self.after(1800, self.check_for_updates)
         self.after(50, self.apply_theme)
+
+    def _stop_adb_server(self):
+        """Release the bundled adb.exe before exit/update so installers can replace it."""
+        adb = find_adb()
+        if not adb:
+            return
+        try:
+            subprocess.run([adb, "kill-server"], capture_output=True, text=True,
+                           timeout=5, creationflags=_flags())
+            resolver_log("ADB server stopped for shutdown/update")
+        except Exception as e:
+            resolver_log("ADB shutdown warning: " + str(e))
+
+    def close_cleanly(self):
+        self._stop_adb_server()
+        self.destroy()
 
     def _startup_shared_sync(self):
         self.production_sync("startup")
@@ -3075,6 +3126,9 @@ class Cleaner(ctk.CTk):
         if suffix == ".exe" and verified:
             if messagebox.askyesno("Update Downloaded", f"Update downloaded successfully.\n\n{verify_text}\n\nInstall now? Android Cleaner will close."):
                 try:
+                    # Release bundled ADB first; a running adb.exe can keep the old
+                    # installation locked and prevent Inno Setup replacing it.
+                    self._stop_adb_server()
                     # Hand the verified installer to Windows as a separate process, then
                     # terminate this PyInstaller process completely.  The installer does
                     # not auto-launch the new EXE; this avoids a transient _MEI/Python DLL
@@ -4248,7 +4302,7 @@ class Cleaner(ctk.CTk):
 
                 for app in rows:
                     rep = db_rep(app["package"])
-                    priority, score, reasons = triage_app(
+                    priority, score, reasons, cleanup_candidate = triage_for_selected_onset(
                         app, rep, special,
                         self.baseline_date,
                         self.onset_var.get()
@@ -4260,9 +4314,7 @@ class Cleaner(ctk.CTk):
                     app["priority"] = priority
                     app["score"] = score
                     app["reason"] = " • ".join(reasons)
-                    app["cleanup_candidate"] = is_cleanup_candidate(
-                        app, self.onset_var.get()
-                    )
+                    app["cleanup_candidate"] = cleanup_candidate
 
                 # If the cable/device changed while this scan was running, discard
                 # its results rather than painting stale customer data onto the UI.
@@ -4372,7 +4424,7 @@ class Cleaner(ctk.CTk):
             rep = db_rep(app["package"])
             app["app_type"] = classify_app_type(app)
             app["reputation"] = effective_reputation_label(app)
-            priority, score, reasons = triage_app(
+            priority, score, reasons, cleanup_candidate = triage_for_selected_onset(
                 app, rep, special,
                 self.baseline_date,
                 self.onset_var.get()
@@ -4380,9 +4432,7 @@ class Cleaner(ctk.CTk):
             app["priority"] = priority
             app["score"] = score
             app["reason"] = " • ".join(reasons)
-            app["cleanup_candidate"] = is_cleanup_candidate(
-                app, self.onset_var.get()
-            )
+            app["cleanup_candidate"] = cleanup_candidate
 
         self.sort_internal()
         self.apply_view()
