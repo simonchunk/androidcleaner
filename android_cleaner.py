@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.24"
+APP_VERSION = "1.2.25"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2869,7 +2869,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.24 Hard Shutdown Lifecycle loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.23 Unified Onset + ADB Shutdown loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -2932,21 +2932,67 @@ class Cleaner(ctk.CTk):
             resolver_log("ADB shutdown warning: " + str(e))
 
     def _force_process_exit(self):
-        """Final shutdown barrier for packaged builds.
-
-        Tk can disappear while a worker/native handle keeps the frozen process alive.
-        At this point settings/DB writes are already synchronous and worker threads are
-        daemon threads, so a hard process exit is preferable to leaving the install
-        directory locked during an upgrade.
-        """
         try:
             resolver_log("Android Cleaner process exit")
         except Exception:
             pass
         os._exit(0)
 
+    def restart_adb(self):
+        """Restart bundled ADB and immediately refresh device detection."""
+        adb = find_adb()
+        if not adb:
+            messagebox.showerror("Restart ADB", "Bundled ADB was not found. Reinstall Android Cleaner.")
+            return
+        def worker():
+            try:
+                subprocess.run([adb, "kill-server"], capture_output=True, text=True, timeout=6, creationflags=_flags())
+                time.sleep(0.5)
+                r = subprocess.run([adb, "start-server"], capture_output=True, text=True, timeout=10, creationflags=_flags())
+                resolver_log("ADB restarted from Drivers & Connection menu: " + ((r.stdout or r.stderr or "OK").strip()))
+                self.after(0, self.refresh_devices)
+                self.after(800, self.refresh_devices)
+                self.after(0, lambda: messagebox.showinfo("Restart ADB", "ADB restarted. Keep the phone unlocked and accept the USB debugging prompt if it appears."))
+            except Exception as e:
+                resolver_log("ADB restart failed: " + str(e))
+                self.after(0, lambda e=e: messagebox.showerror("Restart ADB", f"Could not restart ADB:\n\n{e}"))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def open_device_manager(self):
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["mmc.exe", "devmgmt.msc"], close_fds=True)
+            else:
+                messagebox.showinfo("Device Manager", "Device Manager is only available on Windows.")
+        except Exception as e:
+            messagebox.showerror("Device Manager", f"Could not open Device Manager:\n\n{e}")
+
+    def open_google_usb_driver(self):
+        """Open Google's official driver page; Google requires acceptance of its SDK licence before download."""
+        url = "https://developer.android.com/studio/run/win-usb"
+        try:
+            if os.name == "nt":
+                os.startfile(url)
+            else:
+                import webbrowser
+                webbrowser.open(url)
+        except Exception as e:
+            messagebox.showerror("Google / Pixel ADB Driver", f"Could not open the Google USB Driver page:\n\n{e}")
+
+    def show_connection_help(self):
+        messagebox.showinfo(
+            "Drivers & Connection Help",
+            "PHONE NOT DETECTED\n\n"
+            "1. Keep the phone unlocked and enable USB debugging.\n"
+            "2. Use Restart ADB first.\n"
+            "3. If a Pixel/Google phone still is not detected, install the official Google USB Driver.\n"
+            "4. In Device Manager, ADB should appear as Android Composite ADB Interface. Do not replace the Portable Devices/MTP entry.\n"
+            "5. After installing/changing a driver, use Restart ADB again.\n\n"
+            "UNAUTHORIZED: accept the Allow USB debugging prompt on the phone.\n"
+            "OFFLINE: unplug/replug the phone, keep it unlocked, then Restart ADB."
+        )
+
     def close_cleanly(self):
-        # Invalidate in-flight scan/icon work first so callbacks cannot repopulate the UI.
         self._scan_generation += 1
         self._auto_scan_pending = False
         self._stop_adb_server()
@@ -2956,6 +3002,8 @@ class Cleaner(ctk.CTk):
             pass
         try:
             self.destroy()
+        except Exception:
+            pass
         finally:
             self._force_process_exit()
 
@@ -3164,6 +3212,8 @@ class Cleaner(ctk.CTk):
                         pass
                     try:
                         self.destroy()
+                    except Exception:
+                        pass
                     finally:
                         self._force_process_exit()
                 except Exception as e:
@@ -3237,6 +3287,11 @@ class Cleaner(ctk.CTk):
             return
         menu.delete(0, "end")
         menu.add_command(label="Check for Updates", command=lambda:self.check_for_updates(manual=True))
+        menu.add_separator()
+        menu.add_command(label="Restart ADB", command=self.restart_adb)
+        menu.add_command(label="Install / Repair Google-Pixel ADB Driver…", command=self.open_google_usb_driver)
+        menu.add_command(label="Open Device Manager", command=self.open_device_manager)
+        menu.add_command(label="Drivers & Connection Help", command=self.show_connection_help)
         menu.add_separator()
         if not self.admin_is_unlocked():
             menu.add_command(label="Admin Mode…", command=self.request_admin_mode)

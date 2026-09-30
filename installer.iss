@@ -45,8 +45,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
-  { Run before Inno begins replacing files.  Restart Manager can close the window
-    without ending an older Cleaner process, so explicitly clear both lock owners. }
+  { Defensive cleanup before files are replaced. Handles older/crashed builds too. }
   Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM AndroidCleaner.exe >NUL 2>&1', '', SW_HIDE,
     ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM adb.exe >NUL 2>&1', '', SW_HIDE,
