@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.25"
+APP_VERSION = "1.2.26"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -208,16 +208,6 @@ PROTECTED_PREFIXES = (
     "com.samsung.android.",
     "com.sec.android.",
 )
-
-ONSET_OPTIONS = (
-    "Unknown",
-    "Today",
-    "Last 3 days",
-    "About a week",
-    "Few weeks",
-    "About a month",
-)
-
 
 def resolver_log(message):
     try:
@@ -2152,16 +2142,6 @@ def installer_name(installer):
         else installer
     )
 
-def symptom_window_days():
-    return {
-        "Today": 1,
-        "Last 3 days": 3,
-        "About a week": 10,
-        "Few weeks": 30,
-        "About a month": 45,
-        "Unknown": 30,
-    }
-
 def find_baseline_date(apps):
     """
     Detect a likely migration/setup cluster.
@@ -2459,7 +2439,7 @@ def high_risk_signals(app):
         out[label] = max(score, out.get(label, 0))
     return list(out.items())
 
-def is_cleanup_candidate(app, onset_label="Unknown"):
+def is_cleanup_candidate(app):
     """Conservative main Cleanup gate; broad signals remain in Deep Triage."""
     classification = str(app.get("classification", "unknown")).strip().lower()
     reputation = str(app.get("reputation", "UNKNOWN")).strip().upper()
@@ -2523,49 +2503,18 @@ def is_cleanup_candidate(app, onset_label="Unknown"):
     if any(x in reason for x in category_terms):
         return True
 
-    # Timing only becomes Cleanup evidence when the technician supplied onset.
-    if onset_label != "Unknown":
-        # Only a genuine INSTALL in the selected problem window can create a
-        # timing-only Cleanup finding. Recent updates are supporting evidence only.
-        if "installed during reported problem window" in reason:
-            return True
-
     return False
 
 
-_PRIORITY_RANK = {"BASELINE": 0, "INFO": 1, "CHECK": 2, "HIGH": 3, "CRITICAL": 4}
+def triage_master(app, rep, special, baseline_date):
+    """Single workshop scan based only on independent suspicious evidence.
 
-def triage_for_selected_onset(app, rep, special, baseline_date, onset_label):
-    """Triage for the UI without making staff cycle every onset option.
-
-    When Problem started is Unknown, preserve the ordinary Unknown result but also
-    evaluate the named onset windows. If one of those windows would surface the app
-    more strongly, show that stronger result now and annotate which window caused it.
-    This makes Unknown the broad discovery view; selecting a real onset then narrows
-    the timing correlation rather than being required to discover candidates.
+    Install/update timing is context for the technician only. It never creates or
+    promotes a finding and staff do not need to choose a symptom-onset window.
     """
-    priority, score, reasons = triage_app(app, rep, special, baseline_date, onset_label)
-    cleanup = is_cleanup_candidate({**app, "priority": priority, "reason": " • ".join(reasons)}, onset_label)
-    if onset_label != "Unknown":
-        return priority, score, reasons, cleanup
-
-    best = (priority, score, reasons, cleanup, "Unknown")
-    for candidate_onset in ONSET_OPTIONS:
-        if candidate_onset == "Unknown":
-            continue
-        p2, s2, r2 = triage_app(app, rep, special, baseline_date, candidate_onset)
-        probe = {**app, "priority": p2, "reason": " • ".join(r2)}
-        c2 = is_cleanup_candidate(probe, candidate_onset)
-        key2 = (_PRIORITY_RANK.get(p2, 0), int(c2), s2)
-        keybest = (_PRIORITY_RANK.get(best[0], 0), int(best[3]), best[1])
-        if key2 > keybest:
-            best = (p2, s2, r2, c2, candidate_onset)
-
-    bp, bs, br, bc, bonset = best
-    if bonset != "Unknown":
-        br = list(br) + [f"Potential timing match: {bonset} (Problem started is unknown)"]
-    return bp, bs, br, bc
-
+    priority, score, reasons = triage_app(app, rep, special, baseline_date)
+    cleanup = is_cleanup_candidate({**app, "priority": priority, "reason": " • ".join(reasons)})
+    return priority, score, reasons, cleanup
 
 def popup_ad_assessment(app, special):
     """Assess *meaningful* popup-ad capability; this is not a malware verdict.
@@ -2633,7 +2582,7 @@ def popup_ad_assessment(app, special):
     # A single declared permission is too common to be useful in the workshop UI.
     return "NONE", []
 
-def triage_app(app, rep, special, baseline_date, onset_label):
+def triage_app(app, rep, special, baseline_date):
     """
     Technician-oriented triage.
     Returns:
@@ -2774,84 +2723,16 @@ def triage_app(app, rep, special, baseline_date, onset_label):
                 reasons.append(reason)
                 break
 
-    # Installation timing relative to technician-selected symptom onset.
+    # Install/update dates remain visible in Details but deliberately carry no
+    # risk score. Timing proved too noisy in workshop use and must never make an
+    # otherwise ordinary app suspicious.
     installed_dt = parse_dt(app.get("first_install"))
-    window = symptom_window_days()[onset_label]
-
-    if installed_dt and not system_trusted:
-        age_days = max(0, (datetime.now() - installed_dt).days)
-
-        if onset_label != "Unknown" and age_days <= window:
-            score += 30
-            reasons.append(
-                f"Installed during reported problem window ({onset_label.lower()})"
-            )
-        elif onset_label == "Unknown" and age_days <= 30:
-            score += 12
-            reasons.append("Installed within the last 30 days")
-
-        # Apps installed well after the detected setup/migration cluster are outliers.
-        if baseline_date and installed_dt.date() > baseline_date:
-            delta = (installed_dt.date() - baseline_date).days
-            if delta >= 7:
-                score += 10
-                reasons.append("Installed after the phone's main setup/migration cluster")
-
-    # Update timing is SUPPORTING evidence only. Play Store auto-updates are far
-    # too common to make an ordinary old app enter Cleanup just because the
-    # technician selected "Last 3 days". A recent update only adds weight when
-    # the app already has an independent concern (risky category, sideload,
-    # active powerful access, or learned bad reputation).
-    updated_dt = parse_dt(app.get("last_update"))
-    independent_concern = bool(risk_signals) or sideloaded or any(
-        x in reasons for x in (
-            "Accessibility service is enabled", "Device administrator is active",
-            "Notification access is enabled", "Can draw over other apps",
-            "Can install unknown apps"
-        )
-    ) or str((rep or {}).get("classification", "")).strip().lower() in ("suspicious", "malware")
-    if updated_dt and not system_trusted and independent_concern:
-        update_age = max(0, (datetime.now() - updated_dt).days)
-        if onset_label != "Unknown" and update_age <= window:
-            score += 10
-            reasons.append(
-                f"Recently updated during reported problem window ({onset_label.lower()})"
-            )
-        elif onset_label == "Unknown" and update_age <= 7:
-            score += 5
-            reasons.append("Recently updated (supporting evidence)")
-
-    # Correlated evidence matters more than any single generic clue. For example,
-    # a cleaner installed during the reported problem window, or a sideloaded app
-    # holding Accessibility, deserves stronger review than either fact alone.
-    if onset_label != "Unknown" and not system_trusted:
-        timing_hit = any("reported problem window" in r.lower() for r in reasons)
-        category_hit = bool(risk_signals)
-        powerful_hit = any(x in reasons for x in (
-            "Accessibility service is enabled", "Device administrator is active",
-            "Notification access is enabled", "Can draw over other apps",
-            "Can install unknown apps"
-        ))
-        if timing_hit and (category_hit or sideloaded):
-            score += 15
-            reasons.append("Multiple indicators line up with the reported start time")
-        if sideloaded and powerful_hit:
-            score += 15
-            reasons.append("Sideloaded app also has powerful access")
 
     # Store provenance is context only. It should not erase other evidence.
     if installer == "com.android.vending":
         reasons.append("Installed from Google Play")
     elif installer == "com.sec.android.app.samsungapps":
         reasons.append("Installed from Galaxy Store")
-
-    # Baseline cluster itself should generally be deprioritised unless other signals exist.
-    in_baseline = bool(
-        baseline_date and installed_dt and installed_dt.date() == baseline_date
-    )
-
-    if in_baseline and score < 25:
-        return "BASELINE", score, ["Part of the phone's main setup/migration cluster"]
 
     if score >= 70:
         priority = "CRITICAL"
@@ -2869,7 +2750,7 @@ def triage_app(app, rep, special, baseline_date, onset_label):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.23 Unified Onset + ADB Shutdown loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.26 Master Scan loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -2907,7 +2788,6 @@ class Cleaner(ctk.CTk):
 
         self.view_var = tk.StringVar(value="Cleanup")
         self.count_var = tk.StringVar(value="Showing 0 apps • 0 selected")
-        self.onset_var = tk.StringVar(value="Unknown")
 
         self.build()
         self.protocol("WM_DELETE_WINDOW", self.close_cleanly)
@@ -3523,22 +3403,7 @@ class Cleaner(ctk.CTk):
             command=self.scan
         )
         self.rescan_button.pack(side="right", padx=10)
-        self.onset_var = getattr(self, "onset_var", tk.StringVar(value="Unknown"))
-        onset_group=ctk.CTkFrame(nav,fg_color="transparent")
-        onset_group.pack(side="right",padx=(10,8),pady=3)
-        ctk.CTkLabel(onset_group,text="Problem started",text_color=C["muted"],
-                     font=("Segoe UI",9,"bold")).pack(anchor="w",padx=2,pady=(0,2))
-        onset = ctk.CTkComboBox(
-            onset_group, variable=self.onset_var, values=ONSET_OPTIONS,
-            width=190, height=38, corner_radius=9,
-            fg_color="#102b40", border_width=1, border_color="#2b5878",
-            button_color="#173b57", button_hover_color="#205477",
-            dropdown_fg_color="#102b40", dropdown_hover_color="#1b4968",
-            text_color=C["text"], dropdown_text_color=C["text"],
-            font=("Segoe UI",10), dropdown_font=("Segoe UI",10),
-            command=lambda _v:self.retriage()
-        )
-        onset.pack()
+
 
         # Context
         context = ctk.CTkFrame(root, fg_color="transparent")
@@ -4387,10 +4252,8 @@ class Cleaner(ctk.CTk):
 
                 for app in rows:
                     rep = db_rep(app["package"])
-                    priority, score, reasons, cleanup_candidate = triage_for_selected_onset(
-                        app, rep, special,
-                        self.baseline_date,
-                        self.onset_var.get()
+                    priority, score, reasons, cleanup_candidate = triage_master(
+                        app, rep, special, self.baseline_date
                     )
                     # Unused/hibernated/disabled state is deliberately NOT a diagnostic
                     # Cleanup signal. It is shown in the separate Unused Apps view. If an
@@ -4509,10 +4372,8 @@ class Cleaner(ctk.CTk):
             rep = db_rep(app["package"])
             app["app_type"] = classify_app_type(app)
             app["reputation"] = effective_reputation_label(app)
-            priority, score, reasons, cleanup_candidate = triage_for_selected_onset(
-                app, rep, special,
-                self.baseline_date,
-                self.onset_var.get()
+            priority, score, reasons, cleanup_candidate = triage_master(
+                app, rep, special, self.baseline_date
             )
             app["priority"] = priority
             app["score"] = score
@@ -4523,8 +4384,7 @@ class Cleaner(ctk.CTk):
         self.apply_view()
         self.start_background_icon_discovery()
 
-        # A Problem-started change can introduce new Cleanup candidates. Resolve
-        # whatever is now visible instead of leaving newly-added rows as package IDs.
+        # Resolve whatever is visible after retriage so findings show real app names.
         mode = self.view_var.get()
         if mode in ("Cleanup", "Review", "Games", "Unused Apps"):
             self.after(100, lambda m=mode: self.resolve_view_names(m))
