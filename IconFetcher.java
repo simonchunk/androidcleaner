@@ -67,9 +67,29 @@ public final class IconFetcher {
         out.flush();
     }
 
+    private static void labels(Context context, String[] args) throws Exception {
+        PackageManager pm = context.getPackageManager();
+        StringBuilder out = new StringBuilder();
+        for (int i = 1; i < args.length; i++) {
+            String packageName = args[i];
+            try {
+                CharSequence label = pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0));
+                if (label == null) continue;
+                String clean = label.toString().replace("\t", " ").replace("\r", " ").replace("\n", " ").trim();
+                if (!clean.isEmpty()) out.append(packageName).append('\t').append(clean).append('\n');
+            } catch (Throwable ignored) {}
+        }
+        System.out.print(out.toString());
+        System.out.flush();
+    }
+
     public static void main(String[] args) {
         try {
             Context context = getSystemContext();
+            if (args.length >= 1 && "--labels".equals(args[0])) {
+                labels(context, args);
+                return;
+            }
             if (args.length >= 2 && "--batch".equals(args[0])) {
                 batch(context, args);
                 return;

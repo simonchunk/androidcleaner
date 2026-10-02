@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.29"
+APP_VERSION = "1.2.30-rc1"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -915,19 +915,13 @@ def find_icon_helper():
 
 
 def _icon_cache_for_app(app):
-    """Return a persistent icon cache key shared across phones.
+    """Persistent cross-phone icon cache keyed only by package name.
 
-    lastUpdateTime is deliberately excluded: two phones can have the exact same
-    app build installed on different days. versionCode is preferred because it
-    uniquely identifies an Android build; versionName is the compatibility
-    fallback for devices where dumpsys does not expose versionCode.
+    Icon freshness is cosmetic; scan speed is not. Package-only keys maximise
+    cache reuse and require zero extra ADB metadata calls.
     """
-    package = str(app.get("package") or "").strip()
-    version_code = str(app.get("version_code") or "").strip()
-    version_name = str(app.get("version_name") or "").strip()
-    build_id = ("vc:" + version_code) if version_code else ("vn:" + version_name)
-    identity = "|".join([package, build_id])
-    cache_key = hashlib.sha256(identity.encode("utf-8", errors="ignore")).hexdigest()
+    package = str(app.get("package") or "").strip().lower()
+    cache_key = hashlib.sha256(("pkg:" + package).encode("utf-8", errors="ignore")).hexdigest()
     return cache_key, icon_cache_path(cache_key)
 
 def _existing_icon_cache_for_app(app):
@@ -2160,12 +2154,6 @@ def package_details(serial, package):
     if m:
         d["version_name"] = m.group(1).strip()
 
-    # versionCode is stable across devices for the same app build, unlike
-    # lastUpdateTime. It is therefore the preferred persistent icon-cache key.
-    m = re.search(r"\bversionCode=(\d+)", out)
-    if m:
-        d["version_code"] = m.group(1).strip()
-
     # Popup-ad capability signals from package manifest/dumpsys output.
     # Capability is not proof that the app is malicious.
     d["requests_overlay"] = "android.permission.SYSTEM_ALERT_WINDOW" in out
@@ -2902,9 +2890,53 @@ def triage_app(app, rep, special, baseline_date):
 
     return priority, score, reasons
 
+def read_android_battery(serial):
+    """Best-effort battery diagnostics. Missing OEM fields remain unknown."""
+    result = {"level": None, "status": "", "temp_c": None, "voltage_v": None,
+              "cycles": None, "health_pct": None, "rated_mah": None, "full_mah": None}
+    try:
+        rc,out,_=shell(serial,["dumpsys","battery"],timeout=10)
+        if rc==0:
+            def num(name):
+                m=re.search(r"^\s*"+re.escape(name)+r":\s*(-?\d+)",out,re.M|re.I)
+                return int(m.group(1)) if m else None
+            result["level"]=num("level")
+            t=num("temperature"); v=num("voltage")
+            result["temp_c"]=(t/10.0) if t is not None else None
+            result["voltage_v"]=(v/1000.0) if v is not None else None
+            sm=re.search(r"^\s*status:\s*(\d+)",out,re.M|re.I)
+            result["status"]={2:"Charging",3:"Discharging",4:"Not charging",5:"Full"}.get(int(sm.group(1)),"") if sm else ""
+    except Exception as exc: resolver_log(f"BATTERY dumpsys failed: {exc!r}")
+    # OEM kernels expose different names/units. Read a conservative set and only
+    # calculate health when both full-charge and design capacities are plausible.
+    paths={
+      "cycles":["cycle_count","battery_cycle","cycle"],
+      "full":["charge_full","charge_full_real","fg_fullcapnom"],
+      "design":["charge_full_design","charge_full_design_default","fg_designcap"],
+    }
+    vals={}
+    for key,names in paths.items():
+        for name in names:
+            try:
+                rc,out,_=shell(serial,["cat",f"/sys/class/power_supply/battery/{name}"],timeout=4)
+                raw=str(out or "").strip()
+                if rc==0 and re.fullmatch(r"\d+",raw):
+                    vals[key]=int(raw); break
+            except Exception: pass
+    if vals.get("cycles",0) < 100000: result["cycles"]=vals.get("cycles")
+    full,design=vals.get("full"),vals.get("design")
+    if full and design and full>0 and design>0:
+        # Most kernels use uAh; ratio is unit-independent.
+        pct=round(full*100.0/design)
+        if 20 <= pct <= 150: result["health_pct"]=pct
+        div=1000 if max(full,design)>100000 else 1
+        result["full_mah"]=round(full/div)
+        result["rated_mah"]=round(design/div)
+    return result
+
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.26 Master Scan loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.30-rc1 Fast Scan + Battery + Native Labels loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -2946,6 +2978,7 @@ class Cleaner(ctk.CTk):
         self.build()
         self.protocol("WM_DELETE_WINDOW", self.close_cleanly)
         self.after(100, self.ensure_first_run_configuration)
+        self.after(700, self.maybe_show_whats_new)
         self.after(350, self.refresh_devices)
         self.after(2500, self._device_poll)
         if shared_configured():
@@ -3315,12 +3348,31 @@ class Cleaner(ctk.CTk):
         self._admin_unlocked_until = 0
         self.rebuild_advanced_menu()
 
+    def show_whats_new(self, automatic=False):
+        win=tk.Toplevel(self); win.title(f"What's New - Android Cleaner {APP_VERSION}"); win.geometry("650x520"); win.transient(self)
+        outer=ttk.Frame(win,padding=18); outer.pack(fill="both",expand=True)
+        ttk.Label(outer,text=f"Android Cleaner {APP_VERSION}",font=("Segoe UI",16,"bold")).pack(anchor="w")
+        ttk.Label(outer,text="Release Candidate",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(2,14))
+        body=("FASTER MASTER SCAN\nIcons are completely post-scan. Persistent icon cache now uses package name only and missing icons never trigger a slow per-app fallback.\n\n"
+              "ANDROID BATTERY\nBattery level, temperature, voltage, charge state, cycle count and battery health are shown when the phone exposes trustworthy values. Unsupported health values remain unavailable rather than being guessed.\n\n"
+              "OPPO / APP NAMES\nA new native Android label pass reads human-visible app names in one background ADB batch. This improves detection of unusual labels such as #Contacts and #Messages without pulling whole APKs.\n\n"
+              "MASTER SCAN\nProblem-started timing remains removed. Install dates do not create risk findings.")
+        t=tk.Text(outer,wrap="word",relief="flat",font=("Segoe UI",10),padx=8,pady=8); t.pack(fill="both",expand=True); t.insert("1.0",body); t.configure(state="disabled")
+        ttk.Button(outer,text="Close",command=win.destroy).pack(anchor="e",pady=(12,0))
+        st=load_settings(); st["last_whats_new_version"]=APP_VERSION; save_settings(st)
+
+    def maybe_show_whats_new(self):
+        st=load_settings()
+        if st.get("first_run_complete") and st.get("last_whats_new_version") != APP_VERSION:
+            self.show_whats_new(automatic=True)
+
     def rebuild_advanced_menu(self):
         menu = getattr(self, "advanced_menu", None)
         if menu is None:
             return
         menu.delete(0, "end")
         menu.add_command(label="Check for Updates", command=lambda:self.check_for_updates(manual=True))
+        menu.add_command(label="What's New", command=self.show_whats_new)
         menu.add_separator()
         menu.add_command(label="Restart ADB", command=self.restart_adb)
         menu.add_command(label="Install / Repair Google-Pixel ADB Driver…", command=self.open_google_usb_driver)
@@ -3529,6 +3581,9 @@ class Cleaner(ctk.CTk):
         self.info_var = tk.StringVar(value="Connect an Android phone")
         ctk.CTkLabel(device, textvariable=self.info_var, text_color=C["muted"],
                      font=("Segoe UI", 11), wraplength=350).pack(anchor="w", padx=14)
+        self.battery_var = tk.StringVar(value="Battery: waiting for device")
+        ctk.CTkLabel(device, textvariable=self.battery_var, text_color=C["muted"],
+                     font=("Segoe UI", 10), wraplength=350).pack(anchor="w", padx=14, pady=(1,0))
         self.status_var = tk.StringVar(value="Waiting for phone")
         ctk.CTkLabel(device, textvariable=self.status_var, text_color=C["green"],
                      font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=14, pady=(0,8))
@@ -4181,6 +4236,7 @@ class Cleaner(ctk.CTk):
         self.baseline_date = None
         self.baseline_count = 0
         self.info_var.set("")
+        if hasattr(self, "battery_var"): self.battery_var.set("Battery: waiting for device")
         self.baseline_var.set("")
         for iid in self.tree.get_children():
             self.tree.delete(iid)
@@ -4309,6 +4365,20 @@ class Cleaner(ctk.CTk):
                         f"{friendly_device_name(serial)[0]} ({model})  •  Android {ver}  •  Serial: {serial}"
                     )
                 )
+
+                def battery_worker():
+                    b=read_android_battery(serial)
+                    if serial != self.device_serial: return
+                    parts=[]
+                    if b.get("level") is not None: parts.append(f"{b['level']}%")
+                    if b.get("health_pct") is not None: parts.append(f"Health {b['health_pct']}%")
+                    if b.get("cycles") is not None: parts.append(f"{b['cycles']} cycles")
+                    if b.get("temp_c") is not None: parts.append(f"{b['temp_c']:.1f}°C")
+                    if b.get("voltage_v") is not None: parts.append(f"{b['voltage_v']:.2f}V")
+                    if b.get("status"): parts.append(b["status"])
+                    text="Battery: " + (" • ".join(parts) if parts else "details unavailable on this model")
+                    self.after(0, lambda t=text: self.battery_var.set(t))
+                self.bg(battery_worker)
 
                 self.status("Reading active special access...")
                 special = {
@@ -4448,29 +4518,11 @@ class Cleaner(ctk.CTk):
                     1 for x in rows if x.get("cleanup_candidate", False)
                 )
 
-                # Resolve a bounded Discovery Set before final triage. This includes
-                # current findings plus recent/post-baseline user apps, sideloads,
-                # active-special-access apps and cheap package-name hints. Discovery
-                # itself is NOT a finding; after labels resolve, retriage decides.
-                relevant = discovery_resolution_candidates(rows, self.baseline_date)
-                unresolved = [
-                    x for x in relevant
-                    if x.get("identity_state") not in ("Resolved", "No label")
-                ]
-
-                if unresolved:
-                    self.status(
-                        f"Scan complete: {len(rows)} apps • {cleanup_count} worth checking • "
-                        f"discovering {len(unresolved)} app "
-                        f"name{'s' if len(unresolved) != 1 else ''}..."
-                    )
-                    self._resolve_names_for_apps(relevant, "Discovery names")
-                elif cleanup_count:
-                    self.status(
-                        f"Scan complete: {len(rows)} apps • {cleanup_count} worth checking • names complete"
-                    )
-                else:
-                    self.status(f"Scan complete: {len(rows)} apps • 0 worth checking")
+                # Names/icons are enrichment only and run after the Master Scan.
+                # Never pull APKs automatically here. Native Android label batching
+                # can reveal OEM labels (including OPPO # apps) without delaying scan.
+                self.after(80, self.start_background_label_discovery)
+                self.status(f"Scan complete: {len(rows)} apps • {cleanup_count} worth checking")
 
             except Exception as e:
                 import traceback
@@ -4485,16 +4537,7 @@ class Cleaner(ctk.CTk):
         self.bg(worker)
 
     def update_baseline_label(self):
-        if self.baseline_date:
-            self.baseline_var.set(
-                f"Detected setup/migration cluster: "
-                f"{self.baseline_date.isoformat()} "
-                f"({self.baseline_count} third-party apps installed that day)"
-            )
-        else:
-            self.baseline_var.set(
-                "No strong setup/migration install cluster detected."
-            )
+        self.baseline_var.set("Master Scan • install timing is informational only and does not affect risk")
 
     def retriage(self):
         if not self.all_apps:
@@ -4718,6 +4761,38 @@ class Cleaner(ctk.CTk):
         )
         self.start_background_icon_discovery()
 
+    def start_background_label_discovery(self):
+        serial=self.serial()
+        if not serial or not self.all_apps or getattr(self,"_label_pipeline_running",False): return
+        self._label_pipeline_running=True
+        packages=[str(a.get("package") or "") for a in self.all_apps if a.get("package")]
+        def worker():
+            try:
+                helper=find_icon_helper()
+                if not helper: return
+                remote="/data/local/tmp/tig-icon-helper.jar"
+                if serial not in _ICON_HELPER_READY:
+                    push=adb_run(["-s",serial,"push",str(helper),remote],timeout=30)
+                    if push.returncode!=0: return
+                    _ICON_HELPER_READY.add(serial)
+                run=adb_run(["-s",serial,"exec-out","env",f"CLASSPATH={remote}","app_process","/system/bin","IconFetcher","--labels"]+packages, timeout=max(30,3+len(packages)//4))
+                if run.returncode!=0: return
+                labels={}
+                for line in str(run.stdout or "").splitlines():
+                    if "\t" not in line: continue
+                    pkg,label=line.split("\t",1); label=label.strip()
+                    if pkg and label: labels[pkg.strip()]=label
+                changed=False
+                for app in self.all_apps:
+                    label=labels.get(str(app.get("package") or ""))
+                    if label and label != app.get("app_name"):
+                        app["app_name"]=label; app["identity_state"]="Resolved"; changed=True
+                resolver_log(f"NATIVE LABEL BATCH serial={serial}: {len(labels)}/{len(packages)} labels")
+                if changed and serial==self.serial(): self.after(0,self.retriage)
+            except Exception as exc: resolver_log(f"NATIVE LABEL BATCH error: {exc!r}")
+            finally: self._label_pipeline_running=False
+        threading.Thread(target=worker,daemon=True,name="native-labels").start()
+
     def start_background_icon_discovery(self):
         """Resolve icons only for apps the technician is being asked to inspect."""
         serial = self.serial()
@@ -4775,21 +4850,10 @@ class Cleaner(ctk.CTk):
                 done = sum(1 for a in work if str(a.get("package") or "") in results)
                 if hasattr(self, "icon_status_var"):
                     self.after(0, lambda d=done,t=total: self.icon_status_var.set(f"Icons: {d}/{t} loaded"))
-                # If the batch helper could not run at all, preserve the proven
-                # v1.2.26 renderer as a compatibility fallback. Do not perform
-                # per-app fallback merely for one missing icon.
+                # Never fall back to hundreds of per-app ADB/APK operations here.
+                # Missing icons keep the generic placeholder and can retry on a later view/scan.
                 if done == 0 and total:
-                    resolver_log("ICON BATCH produced no icons; using compatibility fallback")
-                    for app in work:
-                        if token != getattr(self, "_icon_generation", None) or serial != self.serial():
-                            return
-                        icon = pull_device_rendered_icon(serial, app)
-                        if not icon:
-                            icon = pull_apk_icon_fallback(serial, app)
-                        if icon:
-                            done += 1
-                    if hasattr(self, "icon_status_var"):
-                        self.after(0, lambda d=done,t=total: self.icon_status_var.set(f"Icons: {d}/{t} loaded"))
+                    resolver_log("ICON BATCH produced no icons; leaving placeholders (no blocking fallback)")
                 completed_normally = True
                 self.after(0, self.apply_view)
                 resolver_log(f"ICON PIPELINE FINISH serial={serial} generation={token}: loaded={done}/{total} via batch")
