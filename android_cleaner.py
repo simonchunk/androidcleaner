@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.27"
+APP_VERSION = "1.2.29"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -915,10 +915,53 @@ def find_icon_helper():
 
 
 def _icon_cache_for_app(app):
+    """Return a persistent icon cache key shared across phones.
+
+    lastUpdateTime is deliberately excluded: two phones can have the exact same
+    app build installed on different days. versionCode is preferred because it
+    uniquely identifies an Android build; versionName is the compatibility
+    fallback for devices where dumpsys does not expose versionCode.
+    """
     package = str(app.get("package") or "").strip()
-    identity = "|".join([package, str(app.get("version_name") or ""), str(app.get("last_update") or "")])
+    version_code = str(app.get("version_code") or "").strip()
+    version_name = str(app.get("version_name") or "").strip()
+    build_id = ("vc:" + version_code) if version_code else ("vn:" + version_name)
+    identity = "|".join([package, build_id])
     cache_key = hashlib.sha256(identity.encode("utf-8", errors="ignore")).hexdigest()
     return cache_key, icon_cache_path(cache_key)
+
+def _existing_icon_cache_for_app(app):
+    """Find a persistent icon, including cache files made by older releases."""
+    _, current = _icon_cache_for_app(app)
+    try:
+        if current and Path(current).is_file() and Path(current).stat().st_size > 100:
+            return current
+    except OSError:
+        pass
+
+    # v1.2.28 and earlier keyed rendered icons using package/version/update time
+    # or APK SHA. Reuse those files when the local identity database can map the
+    # same package/version to an existing cache entry, avoiding a needless phone
+    # render immediately after upgrading.
+    package = str(app.get("package") or "").strip()
+    version_name = str(app.get("version_name") or "").strip()
+    if not package:
+        return ""
+    try:
+        con = sqlite3.connect(DB_PATH)
+        rows = con.execute(
+            "SELECT sha256 FROM identity_cache WHERE package_name=? AND version_name=? "
+            "AND COALESCE(sha256,'')<>'' ORDER BY resolved_at DESC",
+            (package, version_name),
+        ).fetchall()
+        con.close()
+        for (legacy_key,) in rows:
+            legacy = icon_cache_path(str(legacy_key or "").strip())
+            if legacy and Path(legacy).is_file() and Path(legacy).stat().st_size > 100:
+                return legacy
+    except Exception as exc:
+        resolver_log(f"ICON CACHE legacy lookup {package}: {exc!r}")
+    return ""
 
 def pull_device_rendered_icons_batch(serial, apps, size=96):
     """Render many icons in one app_process/ADB round-trip and stream PNG bytes back."""
@@ -933,8 +976,8 @@ def pull_device_rendered_icons_batch(serial, apps, size=96):
         package = str(app.get("package") or "").strip()
         if not package:
             continue
-        _, cached = _icon_cache_for_app(app)
-        if cached and Path(cached).is_file() and Path(cached).stat().st_size > 100:
+        cached = _existing_icon_cache_for_app(app)
+        if cached:
             app["icon_path"] = cached
             results[package] = cached
         else:
@@ -1023,9 +1066,10 @@ def pull_device_rendered_icon(serial, app):
     # Stable cache without pulling the APK. Updating/reinstalling the app changes
     # version/update identity and therefore creates a fresh cache entry.
     cache_key, cached = _icon_cache_for_app(app)
-    if cached and Path(cached).is_file() and Path(cached).stat().st_size > 100:
-        app["icon_path"] = cached
-        return cached
+    existing_cached = _existing_icon_cache_for_app(app)
+    if existing_cached:
+        app["icon_path"] = existing_cached
+        return existing_cached
 
     remote_jar = "/data/local/tmp/tig-icon-helper.jar"
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", package)
@@ -2115,6 +2159,12 @@ def package_details(serial, package):
     m = re.search(r"versionName=([^\r\n]+)", out)
     if m:
         d["version_name"] = m.group(1).strip()
+
+    # versionCode is stable across devices for the same app build, unlike
+    # lastUpdateTime. It is therefore the preferred persistent icon-cache key.
+    m = re.search(r"\bversionCode=(\d+)", out)
+    if m:
+        d["version_code"] = m.group(1).strip()
 
     # Popup-ad capability signals from package manifest/dumpsys output.
     # Capability is not proof that the app is malicious.
@@ -4380,6 +4430,10 @@ class Cleaner(ctk.CTk):
                 self.sort_internal()
                 self.after(0, self.update_baseline_label)
                 self.after(0, self.apply_view)
+                # v1.2.28: the scan overlay belongs to metadata/risk scanning only.
+                # Icons and human-readable name discovery are background enrichment
+                # and must never keep the technician locked behind "Scanning phone".
+                self.after(0, lambda: self._scan_ui(False))
                 # Icon discovery is an independent post-scan pipeline. Do not rely
                 # on name resolution/retriage to start it: a fully cached scan may
                 # have no resolver work at all.
