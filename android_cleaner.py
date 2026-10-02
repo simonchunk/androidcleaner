@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.26"
+APP_VERSION = "1.2.27"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -491,6 +491,22 @@ def adb_run(args, timeout=20):
     code, out, err = run_adb(args, timeout=timeout)
     return subprocess.CompletedProcess(args=args, returncode=code, stdout=out, stderr=err)
 
+def adb_run_bytes(args, timeout=30):
+    """Run one ADB command and preserve binary stdout (used by batched icon streaming)."""
+    adb = find_adb()
+    if not adb:
+        raise RuntimeError("ADB tools are missing from this Android Cleaner installation. Reinstall or update Android Cleaner.")
+    try:
+        stamp = datetime.now().isoformat(timespec="seconds")
+        with open(ADB_AUDIT_LOG, "a", encoding="utf-8") as f:
+            f.write(stamp + " | adb " + " ".join(str(x) for x in args) + " [binary stdout]\n")
+    except Exception:
+        pass
+    return subprocess.run(
+        [adb] + args, capture_output=True, text=False, timeout=timeout,
+        creationflags=_flags()
+    )
+
 def shell(serial, args, timeout=20):
     return run_adb(["-s", serial, "shell"] + args, timeout=timeout)
 
@@ -898,6 +914,100 @@ def find_icon_helper():
     return None
 
 
+def _icon_cache_for_app(app):
+    package = str(app.get("package") or "").strip()
+    identity = "|".join([package, str(app.get("version_name") or ""), str(app.get("last_update") or "")])
+    cache_key = hashlib.sha256(identity.encode("utf-8", errors="ignore")).hexdigest()
+    return cache_key, icon_cache_path(cache_key)
+
+def pull_device_rendered_icons_batch(serial, apps, size=96):
+    """Render many icons in one app_process/ADB round-trip and stream PNG bytes back."""
+    helper = find_icon_helper()
+    if not helper:
+        resolver_log(f"ICON BATCH: bundled icon-helper.jar missing; APP_DIR={APP_DIR}")
+        return {}
+
+    results = {}
+    pending = []
+    for app in apps:
+        package = str(app.get("package") or "").strip()
+        if not package:
+            continue
+        _, cached = _icon_cache_for_app(app)
+        if cached and Path(cached).is_file() and Path(cached).stat().st_size > 100:
+            app["icon_path"] = cached
+            results[package] = cached
+        else:
+            pending.append(app)
+    if not pending:
+        resolver_log(f"ICON BATCH serial={serial}: all {len(results)} icons already cached")
+        return results
+
+    remote_jar = "/data/local/tmp/tig-icon-helper.jar"
+    try:
+        if serial not in _ICON_HELPER_READY:
+            push = adb_run(["-s", serial, "push", str(helper), remote_jar], timeout=30)
+            if push.returncode != 0:
+                resolver_log(f"ICON BATCH: helper push failed rc={push.returncode}: {(push.stderr or push.stdout or '').strip()}")
+                return results
+            _ICON_HELPER_READY.add(serial)
+        else:
+            check = adb_run(["-s", serial, "shell", "test", "-s", remote_jar], timeout=5)
+            if check.returncode != 0:
+                _ICON_HELPER_READY.discard(serial)
+                push = adb_run(["-s", serial, "push", str(helper), remote_jar], timeout=30)
+                if push.returncode != 0:
+                    return results
+                _ICON_HELPER_READY.add(serial)
+
+        packages = [str(a.get("package") or "").strip() for a in pending]
+        resolver_log(f"ICON BATCH START serial={serial} requested={len(packages)}")
+        run = adb_run_bytes([
+            "-s", serial, "exec-out",
+            "env", f"CLASSPATH={remote_jar}",
+            "app_process", "/system/bin", "IconFetcher",
+            "--batch", str(int(size))
+        ] + packages, timeout=max(30, 3 + len(packages)))
+        if run.returncode != 0:
+            err = (run.stderr or b"").decode("utf-8", errors="replace")
+            resolver_log(f"ICON BATCH FAILED rc={run.returncode}: {err[:800]}")
+            return results
+
+        import struct
+        data = run.stdout or b""
+        pos = 0
+        by_pkg = {str(a.get("package") or "").strip(): a for a in pending}
+        received = 0
+        while pos + 8 <= len(data):
+            pkg_len = struct.unpack_from(">I", data, pos)[0]; pos += 4
+            if pkg_len == 0:
+                break
+            if pkg_len > 1024 or pos + pkg_len + 4 > len(data):
+                raise ValueError(f"invalid icon stream package length {pkg_len}")
+            pkg = data[pos:pos+pkg_len].decode("utf-8", errors="strict"); pos += pkg_len
+            png_len = struct.unpack_from(">I", data, pos)[0]; pos += 4
+            if png_len <= 100 or png_len > 5_000_000 or pos + png_len > len(data):
+                raise ValueError(f"invalid PNG length {png_len} for {pkg}")
+            png = data[pos:pos+png_len]; pos += png_len
+            app = by_pkg.get(pkg)
+            if not app:
+                continue
+            _, target_s = _icon_cache_for_app(app)
+            target = Path(target_s)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(png)
+            with Image.open(target) as im:
+                im.verify()
+            app["icon_path"] = str(target)
+            results[pkg] = str(target)
+            received += 1
+        resolver_log(f"ICON BATCH FINISH serial={serial} received={received}/{len(packages)} bytes={len(data)} cached_total={len(results)}")
+        return results
+    except Exception as exc:
+        resolver_log(f"ICON BATCH ERROR serial={serial}: {exc!r}")
+        return results
+
+
 def pull_device_rendered_icon(serial, app):
     """Ask Android itself to resolve and rasterize the installed app icon."""
     package = str(app.get("package") or "").strip()
@@ -912,13 +1022,7 @@ def pull_device_rendered_icon(serial, app):
 
     # Stable cache without pulling the APK. Updating/reinstalling the app changes
     # version/update identity and therefore creates a fresh cache entry.
-    identity = "|".join([
-        package,
-        str(app.get("version_name") or ""),
-        str(app.get("last_update") or ""),
-    ])
-    cache_key = hashlib.sha256(identity.encode("utf-8", errors="ignore")).hexdigest()
-    cached = icon_cache_path(cache_key)
+    cache_key, cached = _icon_cache_for_app(app)
     if cached and Path(cached).is_file() and Path(cached).stat().st_size > 100:
         app["icon_path"] = cached
         return cached
@@ -4597,77 +4701,50 @@ class Cleaner(ctk.CTk):
         )
         if hasattr(self, "icon_status_var"):
             self.icon_status_var.set(f"Icons: 0/{total} loaded")
-        self.after(0, lambda: self._scan_ui(
-            True, "Loading app icons…", 0, max(total,1)
-        ))
 
         if not work:
             self._icon_pipeline_running = False
             self._icon_pipeline_completed_signature = signature
             resolver_log(f"ICON PIPELINE FINISH serial={serial}: no suspicious/review candidates")
-            self.after(0, lambda:self._scan_ui(False))
             return
 
         def worker():
-            done = 0
-            attempted = 0
             completed_normally = False
             try:
-                for app in work:
-                    if token != getattr(self, "_icon_generation", None) or serial != self.serial():
-                        resolver_log(
-                            f"ICON PIPELINE CANCEL serial={serial} generation={token}: "
-                            "device/generation changed"
-                        )
-                        return
-                    package = str(app.get("package") or "")
-                    existing = str(app.get("icon_path") or "")
-                    attempted += 1
-                    resolver_log(
-                        f"ICON PIPELINE QUEUE {attempted}/{total} {package}: "
-                        "invoking Android device renderer"
-                    )
-                    icon = pull_device_rendered_icon(serial, app)
-                    if not icon and existing and Path(existing).is_file() and Path(existing).stat().st_size > 100:
-                        icon = existing
-                        resolver_log(f"ICON PIPELINE FALLBACK CACHE {package}: {existing}")
-                    elif not icon:
-                        icon = pull_apk_icon_fallback(serial, app)
-                    if icon:
-                        done += 1
-                        app["icon_path"] = icon
-                        resolver_log(f"ICON PIPELINE RESULT {package}: loaded {icon}")
-                    else:
-                        resolver_log(f"ICON PIPELINE RESULT {package}: no icon")
+                if token != getattr(self, "_icon_generation", None) or serial != self.serial():
+                    return
+                # v1.2.27: one native Android renderer invocation for the whole
+                # suspicious set. Cached icons are skipped before the ADB call.
+                results = pull_device_rendered_icons_batch(serial, work, size=96)
+                if token != getattr(self, "_icon_generation", None) or serial != self.serial():
+                    return
+                done = sum(1 for a in work if str(a.get("package") or "") in results)
+                if hasattr(self, "icon_status_var"):
+                    self.after(0, lambda d=done,t=total: self.icon_status_var.set(f"Icons: {d}/{t} loaded"))
+                # If the batch helper could not run at all, preserve the proven
+                # v1.2.26 renderer as a compatibility fallback. Do not perform
+                # per-app fallback merely for one missing icon.
+                if done == 0 and total:
+                    resolver_log("ICON BATCH produced no icons; using compatibility fallback")
+                    for app in work:
+                        if token != getattr(self, "_icon_generation", None) or serial != self.serial():
+                            return
+                        icon = pull_device_rendered_icon(serial, app)
+                        if not icon:
+                            icon = pull_apk_icon_fallback(serial, app)
+                        if icon:
+                            done += 1
                     if hasattr(self, "icon_status_var"):
-                        self.after(
-                            0,
-                            lambda d=done,t=total:
-                                self.icon_status_var.set(f"Icons: {d}/{t} loaded")
-                        )
-                    self.after(
-                        0,
-                        lambda n=attempted,t=total:
-                            self._scan_ui(True, "Loading app icons…", n, t)
-                    )
+                        self.after(0, lambda d=done,t=total: self.icon_status_var.set(f"Icons: {d}/{t} loaded"))
                 completed_normally = True
-                # One final repaint prevents the selected assessment from being
-                # cleared/flickered once per icon.
                 self.after(0, self.apply_view)
-                resolver_log(
-                    f"ICON PIPELINE FINISH serial={serial} generation={token}: "
-                    f"loaded={done}/{total} attempted={attempted}"
-                )
+                resolver_log(f"ICON PIPELINE FINISH serial={serial} generation={token}: loaded={done}/{total} via batch")
             except Exception as exc:
-                resolver_log(
-                    f"ICON PIPELINE ERROR serial={serial} generation={token}: {exc!r}"
-                )
-                self.after(0, lambda:self._scan_ui(False))
+                resolver_log(f"ICON PIPELINE ERROR serial={serial} generation={token}: {exc!r}")
             finally:
                 self._icon_pipeline_running = False
                 if completed_normally:
                     self._icon_pipeline_completed_signature = signature
-                    self.after(80, lambda:self._scan_ui(False))
 
         threading.Thread(
             target=worker, daemon=True, name=f"icon-pipeline-{token}"
