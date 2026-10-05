@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.30-rc2"
+APP_VERSION = "1.2.30-rc3"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2629,6 +2629,16 @@ def high_risk_signals(app):
     elif any(t in blob for t in ("junkclean","junk.clean","cleaner","cleanup","phonemaster")):
         out["Cleaner / junk utility package"] = max(48, out.get("Cleaner / junk utility package",0))
 
+    # Package-only evidence for deliberately generic PUP/adware package IDs.
+    # Require combinations rather than a single broad token to limit false positives.
+    pkg_tokens=set(re.findall(r"[a-z0-9]+", pkg_l))
+    suspicious_words={"clean","cleaner","cleanup","junk","sweep","boost","booster","optimizer","optimiser","flash","torch","protect","permission","guard","large","file","storage","anti","scanner","qrcode","barcode","recover","recovery"}
+    hits=pkg_tokens & suspicious_words
+    if len(hits) >= 4:
+        out["Multiple suspicious package-name signals"] = max(62, out.get("Multiple suspicious package-name signals",0))
+    elif len(hits) >= 3:
+        out["Suspicious package-name combination"] = max(48, out.get("Suspicious package-name combination",0))
+
     return list(out.items())
 
 def is_cleanup_candidate(app):
@@ -2940,6 +2950,29 @@ def triage_app(app, rep, special, baseline_date):
 
     return priority, score, reasons
 
+def foreground_packages(serial):
+    """Return packages currently owning the foreground/focused Android window."""
+    found=[]
+    commands=[
+        ["dumpsys","window","windows"],
+        ["dumpsys","activity","activities"],
+    ]
+    patterns=[
+        r"(?:mCurrentFocus|mFocusedApp)=.*?\s([A-Za-z0-9_.$-]+)/(?:[A-Za-z0-9_.$/-]+)",
+        r"mResumedActivity:.*?\s([A-Za-z0-9_.$-]+)/(?:[A-Za-z0-9_.$/-]+)",
+        r"topResumedActivity=.*?\s([A-Za-z0-9_.$-]+)/(?:[A-Za-z0-9_.$/-]+)",
+    ]
+    for cmd in commands:
+        try:
+            rc,out,_=shell(serial,cmd,timeout=8)
+            if rc!=0: continue
+            for pat in patterns:
+                for m in re.finditer(pat,str(out or ""),re.I):
+                    pkg=m.group(1).strip()
+                    if pkg and pkg not in found: found.append(pkg)
+        except Exception: pass
+    return found
+
 def read_android_battery(serial):
     """Best-effort battery diagnostics. Missing OEM fields remain unknown."""
     result = {"level": None, "status": "", "temp_c": None, "voltage_v": None,
@@ -2960,9 +2993,10 @@ def read_android_battery(serial):
     # OEM kernels expose different names/units. Read a conservative set and only
     # calculate health when both full-charge and design capacities are plausible.
     paths={
-      "cycles":["cycle_count","battery_cycle","cycle"],
-      "full":["charge_full","charge_full_real","fg_fullcapnom"],
+      "cycles":["cycle_count","battery_cycle","batt_cycle","fg_cycle","cycle"],
+      "full":["charge_full","charge_full_real","fg_fullcapnom","batt_full_capacity"],
       "design":["charge_full_design","charge_full_design_default","fg_designcap"],
+      "asoc":["batt_asoc","asoc"],
     }
     vals={}
     for key,names in paths.items():
@@ -2974,11 +3008,14 @@ def read_android_battery(serial):
                     vals[key]=int(raw); break
             except Exception: pass
     if vals.get("cycles",0) < 100000: result["cycles"]=vals.get("cycles")
+    asoc=vals.get("asoc")
+    if asoc and 20 <= asoc <= 150:
+        result["health_pct"]=asoc
     full,design=vals.get("full"),vals.get("design")
     if full and design and full>0 and design>0:
         # Most kernels use uAh; ratio is unit-independent.
         pct=round(full*100.0/design)
-        if 20 <= pct <= 150: result["health_pct"]=pct
+        if 20 <= pct <= 150 and result.get("health_pct") is None: result["health_pct"]=pct
         div=1000 if max(full,design)>100000 else 1
         result["full_mah"]=round(full/div)
         result["rated_mah"]=round(design/div)
@@ -2986,7 +3023,7 @@ def read_android_battery(serial):
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.30-rc1 Fast Scan + Battery + Native Labels loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.30-rc3 Popup Hunt + Tiered Names + Battery Health loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -3403,11 +3440,11 @@ class Cleaner(ctk.CTk):
         outer=ttk.Frame(win,padding=18); outer.pack(fill="both",expand=True)
         ttk.Label(outer,text=f"Android Cleaner {APP_VERSION}",font=("Segoe UI",16,"bold")).pack(anchor="w")
         ttk.Label(outer,text="Release Candidate",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(2,14))
-        body=("SCANNER RESTORED\nThe strong workshop risk engine is restored without bringing back install-time scoring. Cleaner, junk, sweep, booster, storage and similar PUP-style combinations can again promote apps to HIGH or CRITICAL from their own evidence.\n\n"
-              "APP NAMES\nAndroid app names are now required scan metadata and are batch-resolved before classification. Package IDs are only used when Android genuinely cannot provide a label. Launcher/alias labels are also preferred when they expose suspicious names such as #Contacts.\n\n"
-              "FAST ICONS\nIcons remain completely post-scan and use the persistent package-name cache. Missing icons never trigger slow per-app APK pulls during Master Scan.\n\n"
-              "ANDROID BATTERY\nBattery information has more room in the device card. Health/cycles are shown only when the phone exposes trustworthy values.\n\n"
-              "MASTER SCAN\nInstall timing remains informational only and contributes zero risk score.")
+        body=("POPUP HUNT\nNew live Popup Hunt watches Android's foreground window while the popup is happening. A captured app is promoted to CRITICAL for that scan with an observed-popup reason.\n\n"
+              "STRONGER SCANNER\nSuspicious package-name combinations now reinforce cleaner/junk/sweep/guard/file/storage-style detection without using install timing.\n\n"
+              "TIERED APP NAMES\nNames use native Android batch resolution first, targeted pre-classification resolution for suspicious unresolved apps, then background AAPT2 resolution for remaining user apps.\n\n"
+              "BATTERY HEALTH\nExpanded Samsung/OEM battery probes now include ASOC and additional cycle/full-capacity nodes. Health explicitly shows N/A when Android does not expose a trustworthy value.\n\n"
+              "FAST ICONS\nIcons remain post-scan and cached. They cannot delay Master Scan completion.")
         t=tk.Text(outer,wrap="word",relief="flat",font=("Segoe UI",10),padx=8,pady=8); t.pack(fill="both",expand=True); t.insert("1.0",body); t.configure(state="disabled")
         ttk.Button(outer,text="Close",command=win.destroy).pack(anchor="e",pady=(12,0))
         st=load_settings(); st["last_whats_new_version"]=APP_VERSION; save_settings(st)
@@ -3663,6 +3700,13 @@ class Cleaner(ctk.CTk):
             command=self.scan
         )
         self.rescan_button.pack(side="right", padx=10)
+        self.popup_hunt_button = ctk.CTkButton(
+            nav, text="Popup Hunt", width=112, height=42, corner_radius=9,
+            fg_color="#7a2440", hover_color="#9b3151",
+            border_width=1, border_color="#d54d72", font=("Segoe UI", 11, "bold"),
+            command=self.popup_hunt
+        )
+        self.popup_hunt_button.pack(side="right", padx=(4,0))
 
 
         # Context
@@ -4422,7 +4466,7 @@ class Cleaner(ctk.CTk):
                     if serial != self.device_serial: return
                     parts=[]
                     if b.get("level") is not None: parts.append(f"{b['level']}%")
-                    if b.get("health_pct") is not None: parts.append(f"Health {b['health_pct']}%")
+                    parts.append(f"Health {b['health_pct']}%" if b.get("health_pct") is not None else "Health N/A")
                     if b.get("cycles") is not None: parts.append(f"{b['cycles']} cycles")
                     if b.get("temp_c") is not None: parts.append(f"{b['temp_c']:.1f}°C")
                     if b.get("voltage_v") is not None: parts.append(f"{b['voltage_v']:.2f}V")
@@ -4535,6 +4579,27 @@ class Cleaner(ctk.CTk):
                         app["identity_state"] = "Resolved"
                         db_seen(app["package"], label)
 
+                # Tier 2: before risk classification, resolve only unresolved user apps
+                # whose package ID already contains suspicious category signals. This
+                # preserves scan speed while ensuring hidden Cleaner/Junk/etc labels
+                # are available to the risk engine. All remaining unresolved names are
+                # completed asynchronously after results are shown.
+                suspicious_unresolved=[a for a in rows if a.get("app_type") not in ("SYSTEM","OEM / SYSTEM","UPDATED SYSTEM")
+                    and a.get("identity_state") != "Resolved" and package_prefilter_signals(a)]
+                if suspicious_unresolved:
+                    self.status(f"Resolving {len(suspicious_unresolved)} suspicious app names...")
+                    for app in suspicious_unresolved[:40]:
+                        try:
+                            cached=identity_get(app)
+                            if cached and cached.get("app_label"):
+                                app["app_name"]=cached["app_label"]; app["identity_state"]="Resolved"
+                                continue
+                            label,sha,size=pull_apk_identity(serial,app)
+                            if label:
+                                app["app_name"]=label; app["identity_state"]="Resolved"; identity_set(app,label,sha); db_seen(app["package"],label)
+                        except Exception as exc:
+                            resolver_log(f"TIER2 LABEL {app.get('package')}: {exc!r}")
+
                 self.baseline_date, self.baseline_count = find_baseline_date(rows)
 
                 for app in rows:
@@ -4597,6 +4662,39 @@ class Cleaner(ctk.CTk):
                 )
                 self.status("Scan failed")
 
+        self.bg(worker)
+
+    def popup_hunt(self):
+        serial=self.serial()
+        if not serial:
+            messagebox.showwarning("Popup Hunt","Connect and scan the customer phone first.")
+            return
+        self.status("Popup Hunt: trigger the popup on the phone now (watching for 20 seconds)...")
+        known={a.get("package"):a for a in self.all_apps}
+        ignore_prefixes=("com.android.systemui","com.android.settings","com.sec.android.app.launcher","com.google.android.apps.nexuslauncher","com.oplus.launcher","com.coloros.launcher")
+        def worker():
+            import time as _time
+            seen=[]
+            end=_time.time()+20
+            while _time.time()<end and serial==self.serial():
+                for pkg in foreground_packages(serial):
+                    if pkg not in seen and not pkg.startswith(ignore_prefixes): seen.append(pkg)
+                _time.sleep(0.75)
+            candidates=[p for p in seen if p in known]
+            if not candidates:
+                self.status("Popup Hunt: no non-system popup owner captured. Trigger it again and retry.")
+                self.after(0,lambda:messagebox.showinfo("Popup Hunt","No suspicious foreground package was captured.\n\nRun Popup Hunt again, then make the popup appear while the 20-second watch is active."))
+                return
+            # Most recent foreground package is the strongest candidate.
+            pkg=candidates[-1]; app=known[pkg]
+            app["priority"]="CRITICAL"; app["score"]=100
+            reason="Observed owning the foreground window during Popup Hunt"
+            old=str(app.get("reason") or "")
+            app["reason"]=reason + ((" • "+old) if old and old!="No strong indicators" else "")
+            app["cleanup_candidate"]=True
+            self.after(0,self.apply_view)
+            self.status(f"Popup Hunt captured: {app.get('app_name') or pkg}")
+            self.after(0,lambda:messagebox.showwarning("Popup Hunt captured",f"Android reported this app in the foreground during the popup test:\n\n{app.get('app_name') or pkg}\n{pkg}\n\nIt has been promoted to CRITICAL for this scan. Confirm the popup appeared during the watch before removing it."))
         self.bg(worker)
 
     def update_baseline_label(self):
@@ -4852,6 +4950,12 @@ class Cleaner(ctk.CTk):
                         app["app_name"]=label; app["identity_state"]="Resolved"; changed=True
                 resolver_log(f"NATIVE LABEL BATCH serial={serial}: {len(labels)}/{len(packages)} labels")
                 if changed and serial==self.serial(): self.after(0,self.retriage)
+                # Tier 3: finish unresolved USER app names with the proven AAPT2
+                # resolver after the Master Scan is already usable.
+                unresolved=[a for a in self.all_apps if a.get("app_type") not in ("SYSTEM","OEM / SYSTEM","UPDATED SYSTEM")
+                            and a.get("identity_state") not in ("Resolved","No label")]
+                if unresolved and serial==self.serial():
+                    self.after(100, lambda u=list(unresolved): self._resolve_names_for_apps(u, "Remaining app names"))
             except Exception as exc: resolver_log(f"NATIVE LABEL BATCH error: {exc!r}")
             finally: self._label_pipeline_running=False
         threading.Thread(target=worker,daemon=True,name="native-labels").start()

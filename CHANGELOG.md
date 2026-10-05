@@ -1,5 +1,12 @@
 # Android Cleaner Changelog
 
+## v1.2.30-rc3
+- Added live Popup Hunt foreground-owner capture.
+- Strengthened multi-token package-name risk evidence.
+- Added tiered native + targeted AAPT2 + background app-name resolution.
+- Expanded Samsung/OEM battery health and cycle probes, with explicit Health N/A fallback.
+- Kept icons fully asynchronous and cached.
+
 ## 1.2.30-rc2
 - Restored strong workshop risk classification without restoring install/onset timing risk.
 - Cleaner/junk/sweep/booster/storage combinations now promote from their own independent evidence.
