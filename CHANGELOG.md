@@ -1,25 +1,22 @@
 # Android Cleaner Changelog
 
-## 1.2.30-rc1 — 2026-10-02
-- Restored fast Master Scan behaviour: icon and app-label enrichment cannot hold scan completion.
-- Persistent icon cache now keys by package name for maximum reuse across customer phones.
-- Removed automatic slow per-app/APK icon fallback from the post-scan icon pipeline.
-- Added native Android batch app-label discovery through the existing app_process helper. This improves OEM/OPPO app visibility, including unusual labels such as `#Contacts` and `#Messages`, without pulling complete APKs.
-- Added asynchronous Android battery diagnostics: charge level, temperature, voltage, charging state, cycle count and calculated health where trustworthy full/design capacity data is exposed.
-- Added one-time What's New window for each installed release candidate, plus Advanced > What's New.
-- Master Scan remains timing-independent: install/update dates do not create risk findings.
+## 1.2.30-rc2
+- Restored strong workshop risk classification without restoring install/onset timing risk.
+- Cleaner/junk/sweep/booster/storage combinations now promote from their own independent evidence.
+- Human-readable Android labels are batch-resolved before final risk classification and All Apps display.
+- Native label helper now checks suspicious launcher/activity alias labels, targeting ColorOS/OPPO `#` apps.
+- Icons remain post-scan and persistently cached by package name.
+- Expanded device header so battery diagnostics are no longer clipped.
+- Battery diagnostics remain best-effort and do not invent unsupported health values.
+- Added/updated one-time What's New summary for this release candidate.
+
+## 1.2.30-rc1
+- Added Android battery diagnostics, What's New and rolling changelog.
+- Added native background Android label pass.
+- Decoupled icon work from Master Scan.
 
 ## 1.2.29
-- Added persistent icon caching across phones using app build identity.
-
-## 1.2.28
-- Decoupled scan overlay completion from background icon/name enrichment.
-
-## 1.2.27
-- Added batched native Android icon rendering.
+- Added persistent package icon cache.
 
 ## 1.2.26
-- Replaced Problem Started/time-window workflow with one Master Scan. Install timing no longer contributes risk.
-
-## 1.2.25
-- Added staff connection tools including Restart ADB, driver help and Device Manager access.
+- Introduced Master Scan and removed problem-onset timing from risk scoring.

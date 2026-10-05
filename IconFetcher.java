@@ -1,5 +1,7 @@
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.Intent;
+import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
@@ -74,8 +76,20 @@ public final class IconFetcher {
             String packageName = args[i];
             try {
                 CharSequence label = pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0));
-                if (label == null) continue;
-                String clean = label.toString().replace("\t", " ").replace("\r", " ").replace("\n", " ").trim();
+                String clean = label == null ? "" : label.toString().replace("\t", " ").replace("\r", " ").replace("\n", " ").trim();
+                // ColorOS and some adware expose a launcher/activity alias whose visible
+                // label differs from the base ApplicationInfo label (e.g. #Contacts).
+                try {
+                    Intent launch = pm.getLaunchIntentForPackage(packageName);
+                    if (launch != null) {
+                        ResolveInfo ri = pm.resolveActivity(launch, 0);
+                        if (ri != null) {
+                            CharSequence rl = ri.loadLabel(pm);
+                            String launcher = rl == null ? "" : rl.toString().replace("\t", " ").replace("\r", " ").replace("\n", " ").trim();
+                            if (!launcher.isEmpty() && (launcher.startsWith("#") || launcher.startsWith("!") || launcher.startsWith(".") || launcher.startsWith("_") || launcher.startsWith("-") || clean.isEmpty())) clean = launcher;
+                        }
+                    }
+                } catch (Throwable ignored) {}
                 if (!clean.isEmpty()) out.append(packageName).append('\t').append(clean).append('\n');
             } catch (Throwable ignored) {}
         }

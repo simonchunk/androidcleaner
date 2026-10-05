@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.30-rc1"
+APP_VERSION = "1.2.30-rc2"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2269,6 +2269,41 @@ def parse_dt(text):
             pass
     return None
 
+def native_package_labels_batch(serial, packages, chunk_size=120):
+    """Resolve Android-visible labels in a few native app_process batches.
+
+    Labels are required scan metadata (unlike icons), because human-visible names
+    are part of risk classification. Chunking avoids Windows command-line limits.
+    """
+    packages=[str(p or "").strip() for p in packages if str(p or "").strip()]
+    if not serial or not packages:
+        return {}
+    helper=find_icon_helper()
+    if not helper:
+        resolver_log("NATIVE LABEL BATCH: icon-helper.jar missing")
+        return {}
+    remote="/data/local/tmp/tig-icon-helper.jar"
+    if serial not in _ICON_HELPER_READY:
+        push=adb_run(["-s",serial,"push",str(helper),remote],timeout=30)
+        if push.returncode!=0:
+            resolver_log(f"NATIVE LABEL BATCH push failed rc={push.returncode}")
+            return {}
+        _ICON_HELPER_READY.add(serial)
+    labels={}
+    for start in range(0,len(packages),chunk_size):
+        batch=packages[start:start+chunk_size]
+        run=adb_run(["-s",serial,"exec-out","env",f"CLASSPATH={remote}","app_process","/system/bin","IconFetcher","--labels"]+batch,
+                    timeout=max(25,5+len(batch)//3))
+        if run.returncode!=0:
+            resolver_log(f"NATIVE LABEL BATCH chunk failed rc={run.returncode} start={start}")
+            continue
+        for line in str(run.stdout or "").splitlines():
+            if "\t" not in line: continue
+            pkg,label=line.split("\t",1); pkg=pkg.strip(); label=label.strip()
+            if pkg and label: labels[pkg]=label
+    resolver_log(f"NATIVE LABEL BATCH required pass: {len(labels)}/{len(packages)} labels")
+    return labels
+
 def package_display_name(package):
     # v0.8 deliberately avoids invented package-tail names such as
     # "Barcelona", "Orca" or "Buyermob". Until the genuine Android label has
@@ -2579,6 +2614,21 @@ def high_risk_signals(app):
     out = {}
     for label, score in found:
         out[label] = max(score, out.get(label, 0))
+
+    # Strong PUP/adware naming combinations must stand on their own now that
+    # install timing has deliberately been removed from risk scoring. A generic
+    # cleaner containing several independent junk/cleanup/storage claims is a
+    # much stronger workshop signal than a single word such as "clean".
+    blob=(name_l + " " + pkg_l)
+    cleaner_terms=("cleaner","cleanup","junk","sweep","booster","boost","optimizer","optimiser","free storage","freestorage","cache clean","cacheclean","phone clean","phonemaster")
+    cleaner_hits={t for t in cleaner_terms if t in blob}
+    if len(cleaner_hits) >= 3:
+        out["Aggressive cleaner / junk utility naming"] = max(76, out.get("Aggressive cleaner / junk utility naming",0))
+    elif len(cleaner_hits) >= 2:
+        out["Multiple cleaner / junk utility signals"] = max(55, out.get("Multiple cleaner / junk utility signals",0))
+    elif any(t in blob for t in ("junkclean","junk.clean","cleaner","cleanup","phonemaster")):
+        out["Cleaner / junk utility package"] = max(48, out.get("Cleaner / junk utility package",0))
+
     return list(out.items())
 
 def is_cleanup_candidate(app):
@@ -3353,10 +3403,11 @@ class Cleaner(ctk.CTk):
         outer=ttk.Frame(win,padding=18); outer.pack(fill="both",expand=True)
         ttk.Label(outer,text=f"Android Cleaner {APP_VERSION}",font=("Segoe UI",16,"bold")).pack(anchor="w")
         ttk.Label(outer,text="Release Candidate",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(2,14))
-        body=("FASTER MASTER SCAN\nIcons are completely post-scan. Persistent icon cache now uses package name only and missing icons never trigger a slow per-app fallback.\n\n"
-              "ANDROID BATTERY\nBattery level, temperature, voltage, charge state, cycle count and battery health are shown when the phone exposes trustworthy values. Unsupported health values remain unavailable rather than being guessed.\n\n"
-              "OPPO / APP NAMES\nA new native Android label pass reads human-visible app names in one background ADB batch. This improves detection of unusual labels such as #Contacts and #Messages without pulling whole APKs.\n\n"
-              "MASTER SCAN\nProblem-started timing remains removed. Install dates do not create risk findings.")
+        body=("SCANNER RESTORED\nThe strong workshop risk engine is restored without bringing back install-time scoring. Cleaner, junk, sweep, booster, storage and similar PUP-style combinations can again promote apps to HIGH or CRITICAL from their own evidence.\n\n"
+              "APP NAMES\nAndroid app names are now required scan metadata and are batch-resolved before classification. Package IDs are only used when Android genuinely cannot provide a label. Launcher/alias labels are also preferred when they expose suspicious names such as #Contacts.\n\n"
+              "FAST ICONS\nIcons remain completely post-scan and use the persistent package-name cache. Missing icons never trigger slow per-app APK pulls during Master Scan.\n\n"
+              "ANDROID BATTERY\nBattery information has more room in the device card. Health/cycles are shown only when the phone exposes trustworthy values.\n\n"
+              "MASTER SCAN\nInstall timing remains informational only and contributes zero risk score.")
         t=tk.Text(outer,wrap="word",relief="flat",font=("Segoe UI",10),padx=8,pady=8); t.pack(fill="both",expand=True); t.insert("1.0",body); t.configure(state="disabled")
         ttk.Button(outer,text="Close",command=win.destroy).pack(anchor="e",pady=(12,0))
         st=load_settings(); st["last_whats_new_version"]=APP_VERSION; save_settings(st)
@@ -3526,7 +3577,7 @@ class Cleaner(ctk.CTk):
         root.pack(fill="both", expand=True)
 
         # HEADER
-        header = ctk.CTkFrame(root, fg_color=C["header"], corner_radius=0, height=118)
+        header = ctk.CTkFrame(root, fg_color=C["header"], corner_radius=0, height=142)
         header.pack(fill="x")
         header.pack_propagate(False)
 
@@ -4471,6 +4522,18 @@ class Cleaner(ctk.CTk):
                     app["reputation"] = effective_reputation_label(app)
                     app["popup_risk"], app["popup_reasons"] = popup_ad_assessment(app, special)
                     rows.append(app)
+
+                # v1.2.30-rc2: names are REQUIRED scan metadata, not cosmetic enrichment.
+                # Resolve all package labels natively before risk classification. Icons remain post-scan.
+                self.status("Resolving Android app names...")
+                self.after(0, lambda: self._scan_ui(True, "Resolving app names"))
+                labels = native_package_labels_batch(serial, [a.get("package") for a in rows])
+                for app in rows:
+                    label = labels.get(str(app.get("package") or ""))
+                    if label:
+                        app["app_name"] = label
+                        app["identity_state"] = "Resolved"
+                        db_seen(app["package"], label)
 
                 self.baseline_date, self.baseline_count = find_baseline_date(rows)
 
