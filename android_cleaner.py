@@ -26,7 +26,7 @@ from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
 from datetime import datetime, timedelta
 
-APP_VERSION = "1.2.30-rc3"
+APP_VERSION = "1.2.30-rc4"
 APP_NAME = f"The iPhone Guy - Android Cleaner v{APP_VERSION}"
 ADMIN_PIN_SALT = "aabbccddeeff00112233445566778899"
 ADMIN_PIN_HASH = "08b7fd69a6b5494a1773f3c9ce89bc9b7f7f33c38e71ffb5e5d0a844e2ec950c"
@@ -2299,10 +2299,29 @@ def native_package_labels_batch(serial, packages, chunk_size=120):
             continue
         for line in str(run.stdout or "").splitlines():
             if "\t" not in line: continue
-            pkg,label=line.split("\t",1); pkg=pkg.strip(); label=label.strip()
+            pkg,label=line.split("\t",1); pkg=pkg.strip(); label=clean_android_label(label)
             if pkg and label: labels[pkg]=label
     resolver_log(f"NATIVE LABEL BATCH required pass: {len(labels)}/{len(packages)} labels")
     return labels
+
+def clean_android_label(label):
+    """Normalise Android labels and repair common UTF-8/Windows mojibake."""
+    text=str(label or "").replace("\x00", "").strip()
+    if not text:
+        return ""
+    # ADB/app_process output is UTF-8, but Windows text decoding can occasionally
+    # leave UTF-8 bytes interpreted as cp1252/latin-1 (e.g. "Â Open Browser").
+    if any(ch in text for ch in ("Â", "Ã", "â")):
+        for enc in ("cp1252", "latin1"):
+            try:
+                fixed=text.encode(enc).decode("utf-8").strip()
+                if fixed and fixed.count("�") <= text.count("�"):
+                    text=fixed; break
+            except Exception:
+                pass
+    # Strip stray control/format marks but preserve visible symbols such as OPPO # labels.
+    text="".join(ch for ch in text if ch in "\t" or ord(ch) >= 32).strip()
+    return text
 
 def package_display_name(package):
     # v0.8 deliberately avoids invented package-tail names such as
@@ -2973,57 +2992,112 @@ def foreground_packages(serial):
         except Exception: pass
     return found
 
+def _battery_num(v):
+    try: return int(float(str(v).strip()))
+    except Exception: return None
+
+def _battery_read_first(serial, paths):
+    for path in paths:
+        try:
+            rc,out,_=shell(serial,["sh","-c",f"cat {path} 2>/dev/null"],timeout=5)
+            text=str(out or "").strip()
+            if rc==0 and text and "No such" not in text and "Permission denied" not in text:
+                return text,path
+        except Exception: pass
+    return None,None
+
+def _battery_capacity_mah(raw):
+    n=_battery_num(raw)
+    if n is None or n<=0: return None
+    if n>10000: return round(n/1000)
+    return n
+
+def _parse_samsung_battery(text):
+    out={}
+    pats={
+      "asoc": r"mSavedBatteryAsoc\s*:\s*\[?\s*(\d+)",
+      "usage_raw": r"mSavedBatteryUsage\s*:\s*\[?\s*(\d+)",
+      "bsoh": r"mSavedBatteryBsoh\s*:\s*\[?\s*(\d+)",
+      "first_use": r"battery FirstUseDate\s*[:=]\s*([0-9-]+)",
+    }
+    for k,pat in pats.items():
+        m=re.search(pat,text,re.I)
+        if m: out[k]=m.group(1)
+    vals=[int(x) for x in re.findall(r"capacity_max\s*\(?\s*(\d{2,4})\s*\)?",text,re.I)]
+    if vals: out["capacity_max_raw"]=vals[-1]
+    return out
+
 def read_android_battery(serial):
-    """Best-effort battery diagnostics. Missing OEM fields remain unknown."""
-    result = {"level": None, "status": "", "temp_c": None, "voltage_v": None,
-              "cycles": None, "health_pct": None, "rated_mah": None, "full_mah": None}
+    """Bench Tool v0.34 battery-health probe adapted for Android Cleaner."""
+    result={"level":None,"status":"","temp_c":None,"voltage_v":None,"cycles":None,
+            "health_pct":None,"rated_mah":None,"full_mah":None,"health_source":None}
     try:
         rc,out,_=shell(serial,["dumpsys","battery"],timeout=10)
         if rc==0:
-            def num(name):
-                m=re.search(r"^\s*"+re.escape(name)+r":\s*(-?\d+)",out,re.M|re.I)
-                return int(m.group(1)) if m else None
-            result["level"]=num("level")
-            t=num("temperature"); v=num("voltage")
-            result["temp_c"]=(t/10.0) if t is not None else None
-            result["voltage_v"]=(v/1000.0) if v is not None else None
-            sm=re.search(r"^\s*status:\s*(\d+)",out,re.M|re.I)
-            result["status"]={2:"Charging",3:"Discharging",4:"Not charging",5:"Full"}.get(int(sm.group(1)),"") if sm else ""
+            fields={}
+            for line in str(out or "").splitlines():
+                if ":" in line:
+                    k,v=line.split(":",1); fields[k.strip().lower()]=v.strip()
+            result["level"]=_battery_num(fields.get("level"))
+            result["status"]={1:"Unknown",2:"Charging",3:"Discharging",4:"Not charging",5:"Full"}.get(_battery_num(fields.get("status")),"")
+            t=_battery_num(fields.get("temperature")); v=_battery_num(fields.get("voltage"))
+            result["temp_c"]=round(t/10,1) if t is not None else None
+            result["voltage_v"]=round(v/1000,2) if v is not None else None
     except Exception as exc: resolver_log(f"BATTERY dumpsys failed: {exc!r}")
-    # OEM kernels expose different names/units. Read a conservative set and only
-    # calculate health when both full-charge and design capacities are plausible.
-    paths={
-      "cycles":["cycle_count","battery_cycle","batt_cycle","fg_cycle","cycle"],
-      "full":["charge_full","charge_full_real","fg_fullcapnom","batt_full_capacity"],
-      "design":["charge_full_design","charge_full_design_default","fg_designcap"],
-      "asoc":["batt_asoc","asoc"],
-    }
-    vals={}
-    for key,names in paths.items():
-        for name in names:
+    design_paths=["/sys/class/power_supply/battery/charge_full_design","/sys/class/power_supply/battery/energy_full_design","/sys/class/power_supply/battery/charge_full_design_uah","/sys/class/power_supply/battery/batt_full_capacity","/sys/class/power_supply/battery/design_capacity","/sys/class/power_supply/battery/fg_fullcapnom"]
+    full_paths=["/sys/class/power_supply/battery/charge_full","/sys/class/power_supply/battery/energy_full","/sys/class/power_supply/battery/charge_full_uah","/sys/class/power_supply/battery/full_charge_capacity","/sys/class/power_supply/battery/fg_fullcapnom"]
+    cycle_paths=["/sys/class/power_supply/battery/cycle_count","/sys/class/power_supply/battery/battery_cycle","/sys/class/power_supply/battery/cycle"]
+    design_raw,_=_battery_read_first(serial,design_paths); full_raw,_=_battery_read_first(serial,full_paths); cycle_raw,_=_battery_read_first(serial,cycle_paths)
+    design=_battery_capacity_mah(design_raw); full=_battery_capacity_mah(full_raw); cycles=_battery_num(cycle_raw)
+    result["rated_mah"]=design; result["full_mah"]=full; result["cycles"]=cycles
+    if design and full and design>0 and full>0:
+        ratio=full/design*100
+        if 20 <= ratio <= 130:
+            result["health_pct"]=round(ratio); result["health_source"]="full-charge / design capacity"
+    manufacturer=(get_prop(serial,"ro.product.manufacturer") or "").strip().lower()
+    if manufacturer=="samsung":
+        texts=[]
+        for cmd,to in [(["dumpsys","batteryproperties"],12),(["sh","-c","dumpsys batterystats | head -n 900"],15),(["sh","-c","dumpsys battery 2>/dev/null | grep -Ei 'mSavedBattery|FirstUseDate|asoc|bsoh|capacity_max|cycle'"],10)]:
             try:
-                rc,out,_=shell(serial,["cat",f"/sys/class/power_supply/battery/{name}"],timeout=4)
-                raw=str(out or "").strip()
-                if rc==0 and re.fullmatch(r"\d+",raw):
-                    vals[key]=int(raw); break
+                rc,out,_=shell(serial,cmd,timeout=to)
+                if rc==0 and out: texts.append(str(out))
             except Exception: pass
-    if vals.get("cycles",0) < 100000: result["cycles"]=vals.get("cycles")
-    asoc=vals.get("asoc")
-    if asoc and 20 <= asoc <= 150:
-        result["health_pct"]=asoc
-    full,design=vals.get("full"),vals.get("design")
-    if full and design and full>0 and design>0:
-        # Most kernels use uAh; ratio is unit-independent.
-        pct=round(full*100.0/design)
-        if 20 <= pct <= 150 and result.get("health_pct") is None: result["health_pct"]=pct
-        div=1000 if max(full,design)>100000 else 1
-        result["full_mah"]=round(full/div)
-        result["rated_mah"]=round(design/div)
+        nodevals={}
+        for node in ("fg_asoc","batt_asoc","fg_cycle","battery_cycle","fg_fullcapnom","batt_full_capacity","capacity_max","batt_capacity_max","soh","bsoh"):
+            try:
+                rc,out,_=shell(serial,["sh","-c",f"cat /sys/class/power_supply/battery/{node} 2>/dev/null"],timeout=5)
+                val=str(out or "").strip()
+                if rc==0 and val and "Permission denied" not in val and "No such" not in val: nodevals[node]=val
+            except Exception: pass
+        sm=_parse_samsung_battery("\n".join(texts))
+        asoc=_battery_num(sm.get("asoc"))
+        if asoc is None:
+            for key in ("fg_asoc","batt_asoc","soh","bsoh"):
+                n=_battery_num(nodevals.get(key))
+                if n is not None:
+                    if n>1000: n=round(n/100)
+                    elif n>100: n=round(n/10)
+                    if 1 <= n <= 110: asoc=n; break
+        if asoc is None:
+            cm=_battery_num(sm.get("capacity_max_raw") or nodevals.get("capacity_max") or nodevals.get("batt_capacity_max"))
+            if cm is not None:
+                if cm>100: cm=round(cm/10)
+                if 1 <= cm <= 110: asoc=cm
+        if asoc is not None and 1 <= asoc <= 110:
+            result["health_pct"]=asoc; result["health_source"]="Samsung ASOC/capacity_max"
+        usage=_battery_num(sm.get("usage_raw"))
+        if usage is not None: result["cycles"]=round(usage/100,1)
+        elif result.get("cycles") is None:
+            for key in ("fg_cycle","battery_cycle"):
+                n=_battery_num(nodevals.get(key))
+                if n is not None:
+                    result["cycles"]=round(n/100,1) if n>2000 else n; break
+    resolver_log(f"BATTERY Bench probe health={result.get('health_pct')} source={result.get('health_source')} cycles={result.get('cycles')} design={design} full={full}")
     return result
 
 class Cleaner(ctk.CTk):
     def __init__(self):
-        resolver_log("BUILD MARKER Android Cleaner v1.2.30-rc3 Popup Hunt + Tiered Names + Battery Health loaded")
+        resolver_log("BUILD MARKER Android Cleaner v1.2.30-rc4 Live Popup Hunt + Name Retriage + Bench Battery loaded")
         self.appearance_mode = "Dark"
         self.checked_packages = set()
         super().__init__()
@@ -3440,10 +3514,10 @@ class Cleaner(ctk.CTk):
         outer=ttk.Frame(win,padding=18); outer.pack(fill="both",expand=True)
         ttk.Label(outer,text=f"Android Cleaner {APP_VERSION}",font=("Segoe UI",16,"bold")).pack(anchor="w")
         ttk.Label(outer,text="Release Candidate",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(2,14))
-        body=("POPUP HUNT\nNew live Popup Hunt watches Android's foreground window while the popup is happening. A captured app is promoted to CRITICAL for that scan with an observed-popup reason.\n\n"
+        body=("POPUP HUNT\nPopup Hunt now has a live progress panel with countdown, current foreground package, observed-app count and Cancel. Captured popup owners are promoted to CRITICAL for that scan.\n\n"
               "STRONGER SCANNER\nSuspicious package-name combinations now reinforce cleaner/junk/sweep/guard/file/storage-style detection without using install timing.\n\n"
-              "TIERED APP NAMES\nNames use native Android batch resolution first, targeted pre-classification resolution for suspicious unresolved apps, then background AAPT2 resolution for remaining user apps.\n\n"
-              "BATTERY HEALTH\nExpanded Samsung/OEM battery probes now include ASOC and additional cycle/full-capacity nodes. Health explicitly shows N/A when Android does not expose a trustworthy value.\n\n"
+              "APP NAMES + RE-TRIAGE\nResolved Android labels are cleaned for encoding errors and immediately re-triaged, so a late-resolved name such as Open Browser can change the risk result without another scan. Unresolved user apps still fall back to AAPT2.\n\n"
+              "BATTERY HEALTH\nBattery diagnostics now use the proven Bench Tool v0.34 probe, including Samsung ASOC, capacity_max, BatteryService telemetry and full/design-capacity calculation. Unsupported devices still show Health N/A rather than an invented value.\n\n"
               "FAST ICONS\nIcons remain post-scan and cached. They cannot delay Master Scan completion.")
         t=tk.Text(outer,wrap="word",relief="flat",font=("Segoe UI",10),padx=8,pady=8); t.pack(fill="both",expand=True); t.insert("1.0",body); t.configure(state="disabled")
         ttk.Button(outer,text="Close",command=win.destroy).pack(anchor="e",pady=(12,0))
@@ -4573,7 +4647,7 @@ class Cleaner(ctk.CTk):
                 self.after(0, lambda: self._scan_ui(True, "Resolving app names"))
                 labels = native_package_labels_batch(serial, [a.get("package") for a in rows])
                 for app in rows:
-                    label = labels.get(str(app.get("package") or ""))
+                    label = clean_android_label(labels.get(str(app.get("package") or "")))
                     if label:
                         app["app_name"] = label
                         app["identity_state"] = "Resolved"
@@ -4669,32 +4743,60 @@ class Cleaner(ctk.CTk):
         if not serial:
             messagebox.showwarning("Popup Hunt","Connect and scan the customer phone first.")
             return
-        self.status("Popup Hunt: trigger the popup on the phone now (watching for 20 seconds)...")
+        if getattr(self,"_popup_hunt_running",False): return
+        self._popup_hunt_running=True
         known={a.get("package"):a for a in self.all_apps}
         ignore_prefixes=("com.android.systemui","com.android.settings","com.sec.android.app.launcher","com.google.android.apps.nexuslauncher","com.oplus.launcher","com.coloros.launcher")
+        win=ctk.CTkToplevel(self); win.title("Popup Hunt"); win.geometry("560x330"); win.transient(self); win.grab_set()
+        ctk.CTkLabel(win,text="Popup Hunt running",font=("Segoe UI",22,"bold")).pack(anchor="w",padx=24,pady=(22,4))
+        ctk.CTkLabel(win,text="Trigger the unwanted popup on the customer phone now.",font=("Segoe UI",13),text_color=C["text"]).pack(anchor="w",padx=24)
+        countdown=tk.StringVar(value="Watching for 20 seconds…"); current=tk.StringVar(value="Current foreground: waiting…"); observed=tk.StringVar(value="Observed apps: 0")
+        ctk.CTkLabel(win,textvariable=countdown,font=("Segoe UI",15,"bold")).pack(anchor="w",padx=24,pady=(22,6))
+        bar=ctk.CTkProgressBar(win,width=500); bar.pack(padx=24,pady=(0,14)); bar.set(0)
+        ctk.CTkLabel(win,textvariable=current,font=("Segoe UI",11),wraplength=500,justify="left").pack(anchor="w",padx=24,pady=3)
+        ctk.CTkLabel(win,textvariable=observed,font=("Segoe UI",11),text_color=C["muted"]).pack(anchor="w",padx=24,pady=3)
+        cancel=threading.Event()
+        def close_hunt(): cancel.set()
+        ctk.CTkButton(win,text="Cancel",width=110,command=close_hunt).pack(anchor="e",padx=24,pady=(18,16))
+        win.protocol("WM_DELETE_WINDOW",close_hunt)
+        self.status("Popup Hunt running — trigger the unwanted popup now")
+        def ui_tick(left,pkg,count):
+            if not win.winfo_exists(): return
+            countdown.set(f"Watching… {left} seconds remaining")
+            current.set("Current foreground: "+(pkg or "waiting…"))
+            observed.set(f"Observed non-system apps: {count}")
+            bar.set(max(0,min(1,(20-left)/20)))
         def worker():
             import time as _time
-            seen=[]
-            end=_time.time()+20
-            while _time.time()<end and serial==self.serial():
-                for pkg in foreground_packages(serial):
-                    if pkg not in seen and not pkg.startswith(ignore_prefixes): seen.append(pkg)
-                _time.sleep(0.75)
+            seen=[]; end=_time.time()+20; last=""
+            while _time.time()<end and serial==self.serial() and not cancel.is_set():
+                pkgs=foreground_packages(serial)
+                for pkg in pkgs:
+                    if not pkg.startswith(ignore_prefixes):
+                        last=pkg
+                        if pkg not in seen: seen.append(pkg)
+                left=max(0,int(end-_time.time()+0.99))
+                self.after(0,lambda l=left,p=last,c=len(seen):ui_tick(l,p,c))
+                _time.sleep(0.6)
             candidates=[p for p in seen if p in known]
-            if not candidates:
-                self.status("Popup Hunt: no non-system popup owner captured. Trigger it again and retry.")
-                self.after(0,lambda:messagebox.showinfo("Popup Hunt","No suspicious foreground package was captured.\n\nRun Popup Hunt again, then make the popup appear while the 20-second watch is active."))
-                return
-            # Most recent foreground package is the strongest candidate.
-            pkg=candidates[-1]; app=known[pkg]
-            app["priority"]="CRITICAL"; app["score"]=100
-            reason="Observed owning the foreground window during Popup Hunt"
-            old=str(app.get("reason") or "")
-            app["reason"]=reason + ((" • "+old) if old and old!="No strong indicators" else "")
-            app["cleanup_candidate"]=True
-            self.after(0,self.apply_view)
-            self.status(f"Popup Hunt captured: {app.get('app_name') or pkg}")
-            self.after(0,lambda:messagebox.showwarning("Popup Hunt captured",f"Android reported this app in the foreground during the popup test:\n\n{app.get('app_name') or pkg}\n{pkg}\n\nIt has been promoted to CRITICAL for this scan. Confirm the popup appeared during the watch before removing it."))
+            def finish():
+                self._popup_hunt_running=False
+                try:
+                    if win.winfo_exists(): win.destroy()
+                except Exception: pass
+                if cancel.is_set(): self.status("Popup Hunt cancelled"); return
+                if not candidates:
+                    self.status("Popup Hunt: no non-system popup owner captured")
+                    messagebox.showinfo("Popup Hunt","No suspicious foreground package was captured.\n\nRun Popup Hunt again and make the popup appear during the watch.")
+                    return
+                pkg=candidates[-1]; app=known[pkg]
+                app["priority"]="CRITICAL"; app["score"]=100; app["cleanup_candidate"]=True
+                reason="Observed owning the foreground window during Popup Hunt"
+                old=str(app.get("reason") or "")
+                app["reason"]=reason + ((" • "+old) if old and old!="No strong indicators" else "")
+                self.apply_view(); self.status(f"Popup Hunt captured: {app.get('app_name') or pkg}")
+                messagebox.showwarning("Popup Hunt captured",f"Android reported this app in the foreground during the popup test:\n\n{app.get('app_name') or pkg}\n{pkg}\n\nIt has been promoted to CRITICAL for this scan.")
+            self.after(0,finish)
         self.bg(worker)
 
     def update_baseline_label(self):
@@ -4941,7 +5043,7 @@ class Cleaner(ctk.CTk):
                 labels={}
                 for line in str(run.stdout or "").splitlines():
                     if "\t" not in line: continue
-                    pkg,label=line.split("\t",1); label=label.strip()
+                    pkg,label=line.split("\t",1); label=clean_android_label(label)
                     if pkg and label: labels[pkg.strip()]=label
                 changed=False
                 for app in self.all_apps:
@@ -5538,6 +5640,7 @@ class Cleaner(ctk.CTk):
                     real_label, sha256_hex, _size = pull_apk_identity(
                         serial, app
                     )
+                    real_label = clean_android_label(real_label)
                     resolver_log(
                         f"{idx}/{total} pull/done {app['package']} "
                         f"label={real_label!r}"
@@ -5560,6 +5663,9 @@ class Cleaner(ctk.CTk):
                             real_label
                         )
                         resolved += 1
+                        # A newly resolved human label is diagnostic evidence. Re-triage
+                        # immediately rather than waiting for the entire background queue.
+                        self.after(0, self.retriage)
                     else:
                         app["app_name"] = app["package"]
                         app["identity_state"] = "No label"

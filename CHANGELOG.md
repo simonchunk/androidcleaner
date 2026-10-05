@@ -1,5 +1,12 @@
 # Android Cleaner Changelog
 
+## v1.2.30-rc4
+- Added live Popup Hunt progress/diagnostic panel with countdown and Cancel.
+- Resolved app names now trigger immediate re-triage.
+- Added Android-label encoding cleanup.
+- Ported the proven Bench Tool v0.34 Android battery-health probe, including Samsung ASOC/capacity_max telemetry.
+- Kept Health N/A when no trustworthy health value is exposed.
+
 ## v1.2.30-rc3
 - Added live Popup Hunt foreground-owner capture.
 - Strengthened multi-token package-name risk evidence.
